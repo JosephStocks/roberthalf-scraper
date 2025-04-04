@@ -17,10 +17,36 @@ from playwright.sync_api import (
 from config_loader import load_prod_config
 from utils import get_proxy_config
 
-load_prod_config()
+# --- Logging Setup ---
+def setup_logging():
+    """Set up logging configuration to log to 'logs/scraper.log'."""
+    log_file_path = LOG_DIR / "scraper.log"
+
+    # Ensure log directory exists (redundant if created above, but safe)
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        # Use print as logger not fully setup yet, but this might still be too late
+        # if LOG_DIR itself relies on an env var not yet loaded. Consider hardcoding
+        # or delaying the file handler setup if this becomes an issue.
+        print(f"WARNING: Could not create log directory {LOG_DIR}: {e}. Logging to file might fail.")
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(levelname)s [%(filename)s:%(lineno)d] - %(message)s', # Added filename/lineno
+        handlers=[
+            logging.FileHandler(log_file_path, mode='w'), # Use the path object
+            logging.StreamHandler()
+        ]
+    )
+    # Quieter libraries
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("playwright").setLevel(logging.WARNING)
+    # Use __name__ for the logger specific to this module
+    return logging.getLogger(__name__) # Changed from "roberthalf_scraper" to __name__
 
 # --- Constants ---
-# Define base directories
+# Define base directories *before* logger setup uses them
 LOG_DIR = Path("logs")
 SESSION_DIR = Path(".session")
 OUTPUT_DIR = Path("output") # Add output dir constant for consistency
@@ -29,6 +55,12 @@ OUTPUT_DIR = Path("output") # Add output dir constant for consistency
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True) # Ensure output dir is also created here
+
+# Setup logger *after* LOG_DIR is defined, but *before* loading config that might use logging
+logger = setup_logging()
+
+# Load config *after* logger is ready
+load_prod_config()
 
 # Update SESSION_FILE default to be inside SESSION_DIR
 DEFAULT_SESSION_FILENAME = "session_data.json"
@@ -48,33 +80,6 @@ PAGE_DELAY_MAX = float(os.getenv('PAGE_DELAY_MAX', '15'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
 BROWSER_TIMEOUT_MS = int(os.getenv('BROWSER_TIMEOUT_MS', '60000')) # Use updated env var name
 REQUEST_TIMEOUT_SECONDS = int(os.getenv('REQUEST_TIMEOUT_SECONDS', '30')) # Use updated env var name
-
-# --- Logging Setup ---
-def setup_logging():
-    """Set up logging configuration to log to 'logs/scraper.log'."""
-    log_file_path = LOG_DIR / "scraper.log"
-
-    # Ensure log directory exists (redundant if created above, but safe)
-    try:
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        print(f"WARNING: Could not create log directory {LOG_DIR}: {e}. Logging to file might fail.") # Use print as logger not fully setup yet
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s', # Added filename/lineno
-        handlers=[
-            logging.FileHandler(log_file_path, mode='w'), # Use the path object
-            logging.StreamHandler()
-        ]
-    )
-    # Quieter libraries
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("playwright").setLevel(logging.WARNING)
-    # Use __name__ for the logger specific to this module
-    return logging.getLogger(__name__) # Changed from "roberthalf_scraper" to __name__
-
-logger = setup_logging()
 
 # --- Helper Functions ---
 
