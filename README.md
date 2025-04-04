@@ -76,7 +76,7 @@ Configuration is managed via environment variables, typically stored in a `.env`
 | `HEADLESS_BROWSER`      | `true` to run Playwright browser without UI, `false` for visible browser (useful for debug).    | `true`                       |
 | `ROTATE_USER_AGENT`     | `true` to use random user agents from a predefined list, `false` to use `DEFAULT_USER_AGENT`. | `false`                      |
 | `DEFAULT_USER_AGENT`    | The user agent string to use if `ROTATE_USER_AGENT` is `false`.                               | `Mozilla/5.0...Chrome/134...`|
-| `REQUEST_DELAY_SECONDS` | Base delay (in seconds) added between API requests (currently only used during retries).      | `2`                          |
+| `REQUEST_DELAY_SECONDS` | Base delay (in seconds) added between fetching subsequent pages of job results (after the page-specific delay). | `2`                          |
 | `PAGE_DELAY_MIN`        | Minimum delay (in seconds) between fetching subsequent pages of job results.                    | `5`                          |
 | `PAGE_DELAY_MAX`        | Maximum delay (in seconds) between fetching subsequent pages of job results.                    | `15`                         |
 | `MAX_RETRIES`           | Maximum number of retry attempts for failed API requests.                                     | `3`                          |
@@ -93,9 +93,9 @@ Run the script from the project's root directory:
 python roberthalf_scraper.py
 ```
 
-*   Logs will be printed to the console and saved to `scraper.log` (overwritten each run).
-*   If successful, a JSON file named `roberthalf_[state]_jobs_[timestamp].json` (e.g., `roberthalf_tx_jobs_20240827_103000.json`) will be created in the same directory, containing the scraped job data.
-*   Session data (if enabled) will be stored in the file specified by `SESSION_FILE`.
+*   Logs will be printed to the console and saved to `logs/scraper.log` (overwritten each run).
+*   If successful, a JSON file named `roberthalf_[state]_jobs_[timestamp].json` (e.g., `roberthalf_tx_jobs_20240827_103000.json`) will be created in the `output/` directory, containing the scraped job data.
+*   Session data (if enabled) will be stored in the `.session/` directory, using the filename specified by `SESSION_FILE`.
 
 ## Key Script Components
 
@@ -143,7 +143,7 @@ This section documents the internal Robert Half API endpoint used by the script 
     | `distance`     | String        | Search radius around the location.                                                                         | `"50"`                                  |
     | `remote`       | String        | Filter for remote jobs ("Yes", "No", "").                                                                  | `"No"`                                  |
     | `source`       | List[String]  | Source system for jobs (e.g., Salesforce).                                                                 | `["Salesforce"]`                        |
-    | `city`         | List[String]  | List of specific cities to filter by. *Note: The script doesn't use this, filtering by state post-API call.* | `["Kansas City", ...]` (in `curl` only) |
+    | `city`         | List[String]  | List of specific cities to filter by. *Note: The script doesn't use this, filtering by state post-API call.* | `["Kansas City", ...] (in `curl` only) |
     | `lobid`        | List[String]  | Line of Business ID (e.g., "RHT" for Robert Half Technology). Likely important for scope.                | `["RHT"]`                               |
     | `postedwithin` | String        | Time frame for job posting date (maps to `JOB_POST_PERIOD`).                                               | `"PAST_24_HOURS"` (Configurable)        |
     | `pagesize`     | Integer       | Number of job results per page.                                                                            | `25`                                    |
