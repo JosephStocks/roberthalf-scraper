@@ -4,7 +4,7 @@ import time
 import logging
 import os
 import requests
-from datetime import datetime, timedelta, timezone # Import timezone and timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Optional, List, Any, Tuple
 
@@ -16,37 +16,59 @@ from utils import get_proxy_config
 load_prod_config()
 
 # --- Constants ---
-# Use values from env or defaults
-SAVE_SESSION = os.getenv('SAVE_SESSION_COOKIES', 'true').lower() == 'true'
-SESSION_FILE = os.getenv('SESSION_COOKIES_FILE', 'session_data.json') # Rename to reflect it holds more than cookies
+# Define base directories
+LOG_DIR = Path("logs")
+SESSION_DIR = Path(".session")
+OUTPUT_DIR = Path("output") # Add output dir constant for consistency
+
+# Create directories if they don't exist early on (optional, could also do it lazily)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+SESSION_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True) # Ensure output dir is also created here
+
+# Update SESSION_FILE default to be inside SESSION_DIR
+DEFAULT_SESSION_FILENAME = "session_data.json"
+SESSION_FILE_PATH = SESSION_DIR / os.getenv('SESSION_FILE', DEFAULT_SESSION_FILENAME)
+
+SAVE_SESSION = os.getenv('SAVE_SESSION', 'true').lower() == 'true' # Use updated env var name from review
+# SESSION_FILE = os.getenv('SESSION_COOKIES_FILE', 'session_data.json') # Rename to reflect it holds more than cookies # OLD - Remove direct use of filename string
 SESSION_MAX_AGE_HOURS = int(os.getenv('SESSION_MAX_AGE_HOURS', '12'))
 FILTER_STATE = os.getenv('FILTER_STATE', 'TX')
 JOB_POST_PERIOD = os.getenv('JOB_POST_PERIOD', 'PAST_24_HOURS') # e.g., PAST_24_HOURS, PAST_3_DAYS, PAST_WEEK, ALL
-HEADLESS_BROWSER = os.getenv('HEADLESS', 'true').lower() == 'true'
+HEADLESS_BROWSER = os.getenv('HEADLESS_BROWSER', 'true').lower() == 'true' # Use updated env var name from review
 ROTATE_USER_AGENT = os.getenv('ROTATE_USER_AGENT', 'true').lower() == 'true'
-DEFAULT_USER_AGENT = os.getenv('USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36')
-REQUEST_DELAY_SECONDS = float(os.getenv('REQUEST_DELAY', '2'))
+DEFAULT_USER_AGENT = os.getenv('DEFAULT_USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36') # Use updated env var name
+REQUEST_DELAY_SECONDS = float(os.getenv('REQUEST_DELAY_SECONDS', '2')) # Use updated env var name
 PAGE_DELAY_MIN = float(os.getenv('PAGE_DELAY_MIN', '5'))
 PAGE_DELAY_MAX = float(os.getenv('PAGE_DELAY_MAX', '15'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
-BROWSER_TIMEOUT_MS = 60000 # 60 seconds for browser operations
-REQUEST_TIMEOUT_SECONDS = 30 # 30 seconds for HTTP requests
+BROWSER_TIMEOUT_MS = int(os.getenv('BROWSER_TIMEOUT_MS', '60000')) # Use updated env var name
+REQUEST_TIMEOUT_SECONDS = int(os.getenv('REQUEST_TIMEOUT_SECONDS', '30')) # Use updated env var name
 
 # --- Logging Setup ---
 def setup_logging():
-    """Set up logging configuration."""
+    """Set up logging configuration to log to 'logs/scraper.log'."""
+    log_file_path = LOG_DIR / "scraper.log"
+    
+    # Ensure log directory exists (redundant if created above, but safe)
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"WARNING: Could not create log directory {LOG_DIR}: {e}. Logging to file might fail.") # Use print as logger not fully setup yet
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s', # Added filename/lineno
         handlers=[
-            logging.FileHandler("scraper.log", mode='w'), # Overwrite log each run
+            logging.FileHandler(log_file_path, mode='w'), # Use the path object
             logging.StreamHandler()
         ]
     )
     # Quieter libraries
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("playwright").setLevel(logging.WARNING)
-    return logging.getLogger("roberthalf_scraper")
+    # Use __name__ for the logger specific to this module
+    return logging.getLogger(__name__) # Changed from "roberthalf_scraper" to __name__
 
 logger = setup_logging()
 
@@ -72,11 +94,19 @@ def add_human_delay(min_seconds: float = 0.5, max_seconds: float = 1.5) -> None:
     logger.debug(f"Adding browser interaction delay of {delay:.2f} seconds")
     time.sleep(delay)
 
-def save_session_data(cookies: List[Dict[str, Any]], user_agent: str, filename: str = SESSION_FILE) -> None:
-    """Save session cookies and user agent to a file."""
+def save_session_data(cookies: List[Dict[str, Any]], user_agent: str, filename_path: Path = SESSION_FILE_PATH) -> None:
+    """Save session cookies and user agent to the specified file path."""
     if not SAVE_SESSION:
         logger.info("Session saving is disabled.")
         return
+
+    # Ensure the directory exists before writing (redundant if created early, but safe)
+    try:
+        filename_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.error(f"Failed to ensure session directory exists for {filename_path}: {e}")
+        # Decide if we should stop or just warn
+        # return # Option: Stop if directory cannot be created
 
     session_data = {
         'cookies': cookies,
@@ -84,27 +114,27 @@ def save_session_data(cookies: List[Dict[str, Any]], user_agent: str, filename: 
         'timestamp': datetime.now(timezone.utc).isoformat() # Store timestamp
     }
     try:
-        with open(filename, 'w') as f:
+        with open(filename_path, 'w') as f: # Use the Path object directly
             json.dump(session_data, f, indent=2)
-        logger.info(f"Session data (cookies & UA) saved to {filename}")
+        logger.info(f"Session data (cookies & UA) saved to {filename_path.resolve()}")
     except Exception as e:
-        logger.error(f"Failed to save session data: {e}")
+        logger.error(f"Failed to save session data to {filename_path.resolve()}: {e}")
 
-def load_session_data(filename: str = SESSION_FILE) -> Optional[Tuple[List[Dict[str, Any]], str]]:
+def load_session_data(filename_path: Path = SESSION_FILE_PATH) -> Optional[Tuple[List[Dict[str, Any]], str]]:
     """
-    Load session cookies and user agent from a file if it exists and is not expired.
+    Load session cookies and user agent from the specified file path if it exists and is not expired.
     Returns (cookies, user_agent) or None.
     """
     if not SAVE_SESSION:
         return None
 
-    session_path = Path(filename)
-    if not session_path.exists():
-        logger.info(f"Session file {filename} not found.")
+    # Use the Path object directly
+    if not filename_path.exists():
+        logger.info(f"Session file {filename_path.resolve()} not found.")
         return None
 
     try:
-        with open(filename, 'r') as f:
+        with open(filename_path, 'r') as f:
             session_data = json.load(f)
 
         saved_cookies = session_data.get('cookies')
@@ -112,26 +142,26 @@ def load_session_data(filename: str = SESSION_FILE) -> Optional[Tuple[List[Dict[
         saved_timestamp_str = session_data.get('timestamp')
 
         if not saved_cookies or not saved_user_agent or not saved_timestamp_str:
-            logger.warning(f"Session file {filename} is incomplete. Ignoring.")
+            logger.warning(f"Session file {filename_path.resolve()} is incomplete. Ignoring.")
             return None
 
         # Check session age
         saved_timestamp = datetime.fromisoformat(saved_timestamp_str)
         if datetime.now(timezone.utc) - saved_timestamp > timedelta(hours=SESSION_MAX_AGE_HOURS):
-            logger.info(f"Session data in {filename} has expired (older than {SESSION_MAX_AGE_HOURS} hours). Refreshing.")
-            session_path.unlink() # Delete expired session file
+            logger.info(f"Session data in {filename_path.resolve()} has expired (older than {SESSION_MAX_AGE_HOURS} hours). Refreshing.")
+            filename_path.unlink() # Delete expired session file
             return None
 
-        logger.info(f"Loaded valid session data (cookies & UA) from {filename}")
+        logger.info(f"Loaded valid session data (cookies & UA) from {filename_path.resolve()}")
         return saved_cookies, saved_user_agent
 
     except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError) as e:
-        logger.warning(f"Could not load or parse session data from {filename}: {e}. Will create a new session.")
-        if session_path.exists():
+        logger.warning(f"Could not load or parse session data from {filename_path.resolve()}: {e}. Will create a new session.")
+        if filename_path.exists():
             try:
-                session_path.unlink() # Delete corrupted file
+                filename_path.unlink() # Delete corrupted file
             except OSError as unlink_err:
-                logger.error(f"Failed to delete corrupted session file {filename}: {unlink_err}")
+                logger.error(f"Failed to delete corrupted session file {filename_path.resolve()}: {unlink_err}")
         return None
 
 def login_and_get_session() -> Tuple[Optional[List[Dict[str, Any]]], str]:
@@ -316,14 +346,14 @@ def validate_session(cookies_list: List[Dict[str, Any]], user_agent: str) -> boo
 
 def get_or_refresh_session() -> Tuple[List[Dict[str, Any]], str]:
     """Get existing session data or create a new one if needed."""
-    loaded_data = load_session_data()
+    loaded_data = load_session_data() # Uses SESSION_FILE_PATH by default
 
     if loaded_data:
         logger.info("Found existing session data, will try to use it")
         return loaded_data
 
     logger.info("No valid session data found. Creating new session.")
-    
+
     # Get a new session
     cookies, user_agent = login_and_get_session()
 
@@ -331,7 +361,7 @@ def get_or_refresh_session() -> Tuple[List[Dict[str, Any]], str]:
         raise RuntimeError("Failed to obtain a valid session after login attempt.")
 
     # Save the new valid session data
-    save_session_data(cookies, user_agent)
+    save_session_data(cookies, user_agent) # Uses SESSION_FILE_PATH by default
     return cookies, user_agent
 
 
@@ -425,24 +455,22 @@ def filter_jobs_by_state(jobs: List[Dict[str, Any]], state_code: str) -> List[Di
     return filtered_jobs
 
 def save_job_results(jobs_list: List[Dict[str, Any]], total_found: int, filename_prefix: str = "roberthalf") -> None:
-    """Save the final list of jobs to a JSON file inside the 'output' directory."""
-    
-    # Define the output directory
-    output_dir = Path("output")
-    
-    # Create the output directory if it doesn't exist
+    """Save the final list of jobs to a JSON file inside the OUTPUT_DIR."""
+    # Define the output directory using the constant
+    output_dir = OUTPUT_DIR # Use the constant defined earlier
+
+    # Ensure the output directory exists (redundant if created early, but safe)
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Ensured output directory exists: {output_dir.resolve()}")
     except OSError as e:
         logger.error(f"Failed to create output directory {output_dir}: {e}")
-        # Optionally, decide whether to proceed or raise an error
-        # For now, we'll attempt to save anyway, but it might fail if dir creation failed
-    
+        # Optionally decide whether to proceed
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # Construct the filename and then the full path within the output directory
     filename = f"{filename_prefix}_{FILTER_STATE.lower()}_jobs_{timestamp}.json"
-    output_file_path = output_dir / filename
+    output_file_path = output_dir / filename # Use the constant path object
 
     results_data = {
         "jobs": jobs_list,
@@ -458,7 +486,7 @@ def save_job_results(jobs_list: List[Dict[str, Any]], total_found: int, filename
         with open(output_file_path, 'w', encoding='utf-8') as f:
             json.dump(results_data, f, indent=2, ensure_ascii=False)
         # Log the full path
-        logger.info(f"Saved {len(jobs_list)} jobs to {output_file_path.resolve()}") 
+        logger.info(f"Saved {len(jobs_list)} jobs to {output_file_path.resolve()}")
     except Exception as e:
         # Log the full path in case of error too
         logger.error(f"Failed to save job results to {output_file_path.resolve()}: {e}")
@@ -470,21 +498,23 @@ def scrape_roberthalf_jobs() -> None:
 
     try:
         # Get or refresh session (cookies + user_agent)
-        session_cookies, session_user_agent = get_or_refresh_session()
-        
+        session_cookies, session_user_agent = get_or_refresh_session() # Uses new session functions
+
         # Try to fetch first page
         response_data = fetch_with_retry(session_cookies, session_user_agent, 1)
-        
+
         # If first page fails, try getting a new session
         if not response_data:
             logger.info("Initial fetch failed with existing session, getting new session")
-            session_cookies, session_user_agent = login_and_get_session()
-            if not session_cookies or not session_user_agent:
-                raise RuntimeError("Failed to obtain a valid session")
-            save_session_data(session_cookies, session_user_agent)
+            cookies, user_agent = login_and_get_session() # Get new session via login
+            if not cookies or not user_agent:
+                raise RuntimeError("Failed to obtain a valid session after fresh login attempt.")
+            save_session_data(cookies, user_agent) # Save the newly obtained session
+            session_cookies, session_user_agent = cookies, user_agent # Update variables
+            
             response_data = fetch_with_retry(session_cookies, session_user_agent, 1)
             if not response_data:
-                raise RuntimeError("Failed to fetch data even with new session")
+                raise RuntimeError("Failed to fetch data even with newly obtained session")
 
         all_filtered_jobs = []
         page_number = 1
@@ -497,8 +527,18 @@ def scrape_roberthalf_jobs() -> None:
             response_data = fetch_with_retry(session_cookies, session_user_agent, page_number)
 
             if not response_data:
-                logger.error(f"Failed to fetch data for page {page_number} after retries. Stopping.")
-                break # Stop if a page fetch fails critically
+                # Check if the session might be invalid here as well
+                logger.warning(f"Fetch failed for page {page_number}. Trying to validate session.")
+                is_valid = validate_session(session_cookies, session_user_agent)
+                if not is_valid:
+                    logger.error("Session became invalid during pagination. Stopping.")
+                    # Optionally: could try re-logging in here, but for now, we stop.
+                    # raise RuntimeError("Session became invalid during scraping") 
+                    break 
+                else:
+                     logger.error(f"Session still seems valid, but failed to fetch page {page_number} after retries. Stopping.")
+                     break # Stop if fetch fails for other reasons after retries
+
 
             # Extract total count on the first page
             if total_jobs_api is None:
@@ -523,8 +563,8 @@ def scrape_roberthalf_jobs() -> None:
             # Check if this was the last page based on page size
             # (The API might not always return exactly 'pagesize' even if more exist,
             # but if it returns less, it's definitely the end)
-            if len(jobs_on_page) < 25: # Assuming page size is 25
-                logger.info(f"Received less than page size ({len(jobs_on_page)} < 25). Assuming last page.")
+            if len(jobs_on_page) < 25: # Assuming page size is 25 (should ideally use constant or config)
+                logger.info(f"Received less than assumed page size ({len(jobs_on_page)} < 25). Assuming last page.")
                 break
 
             page_number += 1
@@ -534,7 +574,7 @@ def scrape_roberthalf_jobs() -> None:
             logger.info(f"Waiting {page_delay:.2f} seconds before fetching page {page_number}")
             time.sleep(page_delay)
             # Optional: Add general request delay too?
-            # time.sleep(REQUEST_DELAY_SECONDS)
+            time.sleep(REQUEST_DELAY_SECONDS) # Adding the general request delay as well
 
 
         # --- Save final results ---

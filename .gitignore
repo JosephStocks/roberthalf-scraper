@@ -24,12 +24,13 @@ debug_proxy_config.py
 .env.test
 env.txt
 
-# logs
-logs/*
+# Logs
+logs/
 scraper.log
 
-# session cookies
-session_cookies.json
+# Session Data
+.session/
+session_data.json
 
 # gitingest output
 digest.txt
