@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Dict, Optional, List, Any, Tuple
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+from config_loader import load_prod_config
+from utils import get_proxy_config
+
+load_prod_config()
 
 # --- Constants ---
 # Use values from env or defaults
@@ -70,41 +71,6 @@ def add_human_delay(min_seconds: float = 0.5, max_seconds: float = 1.5) -> None:
     delay = random.uniform(min_seconds, max_seconds)
     logger.debug(f"Adding browser interaction delay of {delay:.2f} seconds")
     time.sleep(delay)
-
-def get_proxy_config() -> Optional[Dict[str, str]]:
-    """Creates proxy configuration based on environment variables."""
-    use_proxy = os.getenv('USE_PROXY', 'false').lower() == 'true'
-    if not use_proxy:
-        logger.info("Proxy is disabled")
-        return None
-
-    proxy_server = os.getenv('PROXY_SERVER')
-    proxy_auth = os.getenv('PROXY_AUTH')
-    proxy_bypass = os.getenv('PROXY_BYPASS', '*.iproyal.com')
-
-    if not proxy_server or not proxy_auth:
-        logger.warning("Proxy configuration (PROXY_SERVER, PROXY_AUTH) is incomplete. Proxy disabled.")
-        return None
-
-    try:
-        username, password = proxy_auth.split(':')
-        # Ensure scheme is present for Playwright
-        server = proxy_server if proxy_server.startswith(('http://', 'https://')) else f"http://{proxy_server}"
-        
-        config = {
-            "server": server,
-            "username": username,
-            "password": password,
-            "bypass": proxy_bypass
-        }
-        logger.info(f"Proxy enabled: {config['server']}")
-        return config
-    except ValueError:
-        logger.error(f"Error parsing PROXY_AUTH. Expected format 'username:password'. Proxy disabled.")
-        return None
-    except Exception as e:
-        logger.error(f"Error creating proxy configuration: {e}. Proxy disabled.")
-        return None
 
 def save_session_data(cookies: List[Dict[str, Any]], user_agent: str, filename: str = SESSION_FILE) -> None:
     """Save session cookies and user agent to a file."""

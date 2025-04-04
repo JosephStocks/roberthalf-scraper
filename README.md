@@ -25,7 +25,6 @@ This Python script scrapes job listings from Robert Half's website. It automates
     *   `playwright>=1.51.0`
     *   `python-dotenv>=1.1.0`
     *   `requests>=2.32.3`
-    *   `beautifulsoup4>=4.13.3` (*Note: Listed in `pyproject.toml` but not currently used in `roberthalf_scraper.py` as of the provided version.*)
 *   **Playwright Browsers:** You need to install the browser binaries for Playwright (`playwright install`).
 
 ## Installation

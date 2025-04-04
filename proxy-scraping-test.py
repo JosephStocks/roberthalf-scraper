@@ -1,92 +1,136 @@
-from playwright.sync_api import sync_playwright
-from dotenv import load_dotenv
+# --- proxy-scraping-test.py (Refactored) ---
+
+from playwright.sync_api import sync_playwright, Error as PlaywrightError
 import os
 import time
-import json
+import logging # Use logging consistent with other modules
 
-# Load environment variables
-load_dotenv()
+from config_loader import load_test_config
+from utils import get_proxy_config # Import the centralized function
+
+# Basic logging setup for this script
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("proxy_test")
+
+# Load test configuration variables into the environment
+if not load_test_config():
+    logger.warning("Could not load .env.test file. Relying on existing environment variables.")
 
 def scrape_with_iproyal_proxy():
-    with sync_playwright() as p:
-        # Get proxy configuration from environment variables
-        proxy_server = os.getenv('PROXY_SERVER')
-        proxy_auth = os.getenv('PROXY_AUTH')
-        proxy_bypass = os.getenv('PROXY_BYPASS', '*.iproyal.com')  # Default to *.iproyal.com if not set
+    logger.info("--- Starting Proxy Scraping Test ---")
+    
+    # --- Use the centralized proxy config function ---
+    proxy_config = get_proxy_config() 
+    if not proxy_config:
+        logger.error("Proxy is required for this test but is disabled or misconfigured in .env.test. Exiting.")
+        return # Exit if no valid proxy config
+    # --- End of proxy config block ---
         
-        if not proxy_server or not proxy_auth:
-            raise ValueError("Proxy configuration not found in environment variables. Please check your .env file.")
-        
-        # Split proxy auth into username and password
-        username, password = proxy_auth.split(':')
-        
-        # Get optional configuration from environment variables with defaults
+    # Get optional configuration specific to this test
+    try:
         max_requests_per_ip = int(os.getenv('MAX_REQUESTS_PER_IP', '5'))
         max_time_per_ip = int(os.getenv('MAX_TIME_PER_IP', '30'))  # seconds
-        request_delay = int(os.getenv('REQUEST_DELAY', '2'))
-        
-        # Proxy configuration dictionary used in multiple places
-        proxy_config = {
-            "server": f"https://{proxy_server}",
-            "username": username,
-            "password": password,
-            "bypass": proxy_bypass
-        }
-        
-        # Launch browser with proxy configuration
-        browser = p.chromium.launch(
-            proxy=proxy_config,
-            headless=False  # Set to True in production
-        )
-        
+        request_delay = float(os.getenv('REQUEST_DELAY', '2.0')) # Allow float for delay
+        headless_mode = os.getenv('HEADLESS', 'false').lower() == 'true' # Optional headless for testing
+        logger.info(f"Test Config: Max Req/IP={max_requests_per_ip}, Max Time/IP={max_time_per_ip}s, Delay={request_delay}s, Headless={headless_mode}")
+    except ValueError as e:
+        logger.error(f"Invalid non-integer value for test config (MAX_REQUESTS_PER_IP, MAX_TIME_PER_IP, REQUEST_DELAY): {e}")
+        return
+
+    with sync_playwright() as p:
+        browser = None
+        context = None
         try:
-            # Create initial context
-            context = browser.new_context(proxy=proxy_config)
+            # Launch browser with the obtained proxy_config
+            logger.info(f"Launching browser with proxy: {proxy_config['server']} (Headless: {headless_mode})")
+            browser = p.chromium.launch(
+                proxy=proxy_config,
+                headless=headless_mode
+            )
+            
+            # Create initial context, passing proxy again (good practice)
+            logger.info("Creating browser context...")
+            context = browser.new_context(
+                proxy=proxy_config,
+                ignore_https_errors=True # Often helpful with proxies/IP checking sites
+            )
             page = context.new_page()
             
             # Track usage of current IP
             start_time = time.time()
             request_count = 0
             
+            logger.info("Starting request loop (Press Ctrl+C to stop)...")
             while True:
-                # Check if we need to rotate IP
-                if (request_count >= max_requests_per_ip or 
-                    time.time() - start_time >= max_time_per_ip):
-                    print("\nRotating IP...")
-                    context.close()
-                    context = browser.new_context(proxy=proxy_config)
-                    page = context.new_page()
-                    start_time = time.time()
-                    request_count = 0
-                
-                print(f"\nRequest {request_count + 1} with current IP:")
-                
-                # Get IP address
-                page.goto("https://ipv4.icanhazip.com")
-                ip_address = page.content().strip()
-                ip_address = ip_address.replace('<html><head><meta name="color-scheme" content="light dark"></head><body><pre style="word-wrap: break-word; white-space: pre-wrap;">', '').replace('</pre></body></html>', '').strip()
-                print(f"Current IP: {ip_address}")
-                
-                # Get detailed IP info
-                response = page.goto("https://ipapi.co/json/")
-                ip_info = response.json()
-                
-                print("IP Details:")
-                print(f"  City: {ip_info.get('city', 'N/A')}")
-                print(f"  Region: {ip_info.get('region', 'N/A')}")
-                print(f"  Country: {ip_info.get('country_name', 'N/A')}")
-                print(f"  Organization: {ip_info.get('org', 'N/A')}")
-                print(f"  Timezone: {ip_info.get('timezone', 'N/A')}")
-                
-                request_count += 1
-                time.sleep(request_delay)  # Wait between requests
+                current_ip = "Unknown" # Default in case of failure
+                try:
+                    # Check if we need to rotate IP by closing/reopening context
+                    # Note: For IPRoyal sticky sessions, this might not force a *new* IP immediately
+                    # unless the sticky session time also expires. Simple context closing primarily
+                    # cleans the browser state (cookies, etc.). Check IPRoyal docs for forced rotation.
+                    if (request_count >= max_requests_per_ip or 
+                        (max_time_per_ip > 0 and time.time() - start_time >= max_time_per_ip)):
+                        logger.info(f"Rotation condition met (Requests: {request_count}/{max_requests_per_ip}, Time: {time.time() - start_time:.1f}/{max_time_per_ip}s). Recreating context...")
+                        page.close()
+                        context.close() 
+                        context = browser.new_context(proxy=proxy_config, ignore_https_errors=True)
+                        page = context.new_page()
+                        start_time = time.time()
+                        request_count = 0
+                        logger.info("Context recreated.")
+                    
+                    logger.info(f"--- Request {request_count + 1} ---")
+                    
+                    # Get IP address using a reliable service
+                    logger.debug("Navigating to icanhazip.com...")
+                    page.goto("https://ipv4.icanhazip.com", timeout=20000) 
+                    # Simpler content extraction
+                    current_ip = page.locator('pre').text_content().strip()
+                    logger.info(f"Current Exit IP: {current_ip}")
+                    
+                    # Get detailed IP info (optional, can add delay/complexity)
+                    # logger.debug("Navigating to ipapi.co...")
+                    # response = page.goto("https://ipapi.co/json/", timeout=20000)
+                    # ip_info = response.json()
+                    # logger.info("IP Details:")
+                    # logger.info(f"  City: {ip_info.get('city', 'N/A')}")
+                    # logger.info(f"  Region: {ip_info.get('region', 'N/A')}")
+                    # logger.info(f"  Country: {ip_info.get('country_name', 'N/A')}")
+                    # logger.info(f"  Organization: {ip_info.get('org', 'N/A')}")
+                    
+                    request_count += 1
+                    
+                except PlaywrightError as e:
+                     logger.error(f"Playwright error during request {request_count + 1} (IP: {current_ip}): {e}")
+                     # Decide how to handle errors: break, continue, screenshot?
+                     try:
+                         page.screenshot(path=f"proxy_test_error_{request_count+1}.png")
+                         logger.info("Saved error screenshot.")
+                     except Exception as ss_err:
+                         logger.error(f"Failed to save error screenshot: {ss_err}")
+                     # Maybe force context rotation on error?
+                     request_count = max_requests_per_ip # Force rotation on next loop
+                     
+                except Exception as e:
+                     logger.error(f"Unexpected error during request {request_count + 1} (IP: {current_ip}): {e}", exc_info=True)
+                     request_count = max_requests_per_ip # Force rotation
+                     
+                finally:
+                     # Wait between requests, even after errors before potentially rotating
+                     logger.debug(f"Sleeping for {request_delay:.1f} seconds...")
+                     time.sleep(request_delay)  
             
         except KeyboardInterrupt:
-            print("\nStopping...")
+            logger.info("Ctrl+C detected. Stopping...")
         except Exception as e:
-            print(f"An error occurred: {e}")
+            logger.error(f"An uncaught error occurred in the main loop: {e}", exc_info=True)
         finally:
-            browser.close()
+            logger.info("Closing browser...")
+            if context:
+                 context.close()
+            if browser:
+                browser.close()
+            logger.info("--- Proxy Scraping Test Finished ---")
 
-# Run the function
-scrape_with_iproyal_proxy()
+if __name__ == "__main__":
+    scrape_with_iproyal_proxy()

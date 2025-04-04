@@ -16,3 +16,20 @@ wheels/
 roberthalf*_jobs*.json
 
 prompt.txt
+
+# debug files
+debug_proxy_config.py
+
+# test files
+.env.test
+env.txt
+
+# logs
+logs/*
+scraper.log
+
+# session cookies
+session_cookies.json
+
+# gitingest output
+digest.txt
