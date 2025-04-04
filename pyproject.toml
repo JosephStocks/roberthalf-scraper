@@ -9,3 +9,74 @@ dependencies = [
     "python-dotenv>=1.1.0",
     "requests>=2.32.3",
 ]
+
+[tool.ruff]
+# Set a more traditional line length since we're not using Black
+line-length = 100
+
+ # 4-space indentation (Python standard)
+indent-width = 4
+
+# Target the version of Python you're using
+target-version = "py313"
+
+# Enable fix functionality to automatically fix issues
+fix = true
+
+# Exclude common directories and files
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    ".ruff_cache",
+    "dist",
+    "build",
+]
+
+# Formatting options - important since you're not using Black
+[tool.ruff.format]
+quote-style = "double"  # Use double quotes for strings
+indent-style = "space"  # Indent with spaces, not tabs
+line-ending = "auto"  # Auto-detect line endings
+docstring-code-format = true  # Format code blocks in docstrings
+docstring-code-line-length = 80  # Shorter line length for code examples in docstrings
+
+# Lint options for specific rule sets
+[tool.ruff.lint]
+# Select comprehensive rule sets for thorough linting
+select = [
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+    "W",  # pycodestyle warnings
+    "B",  # flake8-bugbear for bug detection
+    "N",  # pep8-naming for naming conventions
+    "UP", # pyupgrade for modern Python syntax
+    "I",  # isort for import sorting
+    "C4", # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RUF", # Ruff-specific rules
+]
+# Ignore some rules that might be too strict or conflict with your style preferences
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+]
+# Allow unused variables prefixed with underscores
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+# Configure quotation style rules
+[tool.ruff.lint.flake8-quotes]
+docstring-quotes = "double"
+inline-quotes = "double"
+multiline-quotes = "double"
+
+# Per-file rule ignores for special cases
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Ignore unused imports in __init__.py
+"tests/*.py" = ["N802", "S101"]  # Allow non-standard function names and assert statements in tests
+
+# Import sorting options
+[tool.ruff.lint.isort]
+known-first-party = ["scrape_roberthalf"]  # Adjust with your module names
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+combine-as-imports = true

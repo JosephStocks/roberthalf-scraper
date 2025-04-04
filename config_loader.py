@@ -1,9 +1,10 @@
 """
 Configuration loader utility for different environments.
 """
-from dotenv import load_dotenv
 from pathlib import Path
-import os
+
+from dotenv import load_dotenv
+
 
 def load_test_config():
     """Load test environment configuration from .env.test"""

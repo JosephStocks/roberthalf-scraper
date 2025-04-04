@@ -1,14 +1,18 @@
-import random
 import json
-import time
 import logging
 import os
-import requests
-from datetime import datetime, timedelta, timezone
+import random
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional, List, Any, Tuple
+from typing import Any
 
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
+import requests
+from playwright.sync_api import (
+    Error as PlaywrightError,
+    TimeoutError as PlaywrightTimeoutError,
+    sync_playwright,
+)
 
 from config_loader import load_prod_config
 from utils import get_proxy_config
@@ -49,7 +53,7 @@ REQUEST_TIMEOUT_SECONDS = int(os.getenv('REQUEST_TIMEOUT_SECONDS', '30')) # Use 
 def setup_logging():
     """Set up logging configuration to log to 'logs/scraper.log'."""
     log_file_path = LOG_DIR / "scraper.log"
-    
+
     # Ensure log directory exists (redundant if created above, but safe)
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -94,7 +98,7 @@ def add_human_delay(min_seconds: float = 0.5, max_seconds: float = 1.5) -> None:
     logger.debug(f"Adding browser interaction delay of {delay:.2f} seconds")
     time.sleep(delay)
 
-def save_session_data(cookies: List[Dict[str, Any]], user_agent: str, filename_path: Path = SESSION_FILE_PATH) -> None:
+def save_session_data(cookies: list[dict[str, Any]], user_agent: str, filename_path: Path = SESSION_FILE_PATH) -> None:
     """Save session cookies and user agent to the specified file path."""
     if not SAVE_SESSION:
         logger.info("Session saving is disabled.")
@@ -111,7 +115,7 @@ def save_session_data(cookies: List[Dict[str, Any]], user_agent: str, filename_p
     session_data = {
         'cookies': cookies,
         'user_agent': user_agent,
-        'timestamp': datetime.now(timezone.utc).isoformat() # Store timestamp
+        'timestamp': datetime.now(UTC).isoformat() # Store timestamp
     }
     try:
         with open(filename_path, 'w') as f: # Use the Path object directly
@@ -120,7 +124,7 @@ def save_session_data(cookies: List[Dict[str, Any]], user_agent: str, filename_p
     except Exception as e:
         logger.error(f"Failed to save session data to {filename_path.resolve()}: {e}")
 
-def load_session_data(filename_path: Path = SESSION_FILE_PATH) -> Optional[Tuple[List[Dict[str, Any]], str]]:
+def load_session_data(filename_path: Path = SESSION_FILE_PATH) -> tuple[list[dict[str, Any]], str] | None:
     """
     Load session cookies and user agent from the specified file path if it exists and is not expired.
     Returns (cookies, user_agent) or None.
@@ -134,7 +138,7 @@ def load_session_data(filename_path: Path = SESSION_FILE_PATH) -> Optional[Tuple
         return None
 
     try:
-        with open(filename_path, 'r') as f:
+        with open(filename_path) as f:
             session_data = json.load(f)
 
         saved_cookies = session_data.get('cookies')
@@ -147,7 +151,7 @@ def load_session_data(filename_path: Path = SESSION_FILE_PATH) -> Optional[Tuple
 
         # Check session age
         saved_timestamp = datetime.fromisoformat(saved_timestamp_str)
-        if datetime.now(timezone.utc) - saved_timestamp > timedelta(hours=SESSION_MAX_AGE_HOURS):
+        if datetime.now(UTC) - saved_timestamp > timedelta(hours=SESSION_MAX_AGE_HOURS):
             logger.info(f"Session data in {filename_path.resolve()} has expired (older than {SESSION_MAX_AGE_HOURS} hours). Refreshing.")
             filename_path.unlink() # Delete expired session file
             return None
@@ -164,10 +168,10 @@ def load_session_data(filename_path: Path = SESSION_FILE_PATH) -> Optional[Tuple
                 logger.error(f"Failed to delete corrupted session file {filename_path.resolve()}: {unlink_err}")
         return None
 
-def login_and_get_session() -> Tuple[Optional[List[Dict[str, Any]]], str]:
+def login_and_get_session() -> tuple[list[dict[str, Any]] | None, str]:
     """Handle the login process using Playwright and return cookies and user agent."""
     logger.info("Starting login process with Playwright")
-    
+
     # Determine user agent for this session attempt
     session_user_agent = get_user_agent()
     logger.info(f"Using User Agent for login: {session_user_agent}")
@@ -183,7 +187,7 @@ def login_and_get_session() -> Tuple[Optional[List[Dict[str, Any]]], str]:
                 headless=HEADLESS_BROWSER,
                 timeout=BROWSER_TIMEOUT_MS
             )
-            
+
             context = browser.new_context(
                 proxy=proxy_config,
                 viewport={'width': 1920, 'height': 1080},
@@ -290,7 +294,7 @@ def login_and_get_session() -> Tuple[Optional[List[Dict[str, Any]]], str]:
             logger.debug("Playwright browser closed.")
 
 
-def validate_session(cookies_list: List[Dict[str, Any]], user_agent: str) -> bool:
+def validate_session(cookies_list: list[dict[str, Any]], user_agent: str) -> bool:
     """Validate if the session cookies are still valid using the API."""
     logger.info("Validating session cookies via API")
     url = 'https://www.roberthalf.com/bin/jobSearchServlet'
@@ -320,7 +324,7 @@ def validate_session(cookies_list: List[Dict[str, Any]], user_agent: str) -> boo
 
     try:
         response = requests.post(url, headers=headers, cookies=cookie_dict, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
-        
+
         logger.debug(f"Validation request status: {response.status_code}")
         # Check for successful status codes and potentially inspect response content if needed
         if response.status_code >= 200 and response.status_code < 300:
@@ -344,7 +348,7 @@ def validate_session(cookies_list: List[Dict[str, Any]], user_agent: str) -> boo
         return False
 
 
-def get_or_refresh_session() -> Tuple[List[Dict[str, Any]], str]:
+def get_or_refresh_session() -> tuple[list[dict[str, Any]], str]:
     """Get existing session data or create a new one if needed."""
     loaded_data = load_session_data() # Uses SESSION_FILE_PATH by default
 
@@ -365,7 +369,7 @@ def get_or_refresh_session() -> Tuple[List[Dict[str, Any]], str]:
     return cookies, user_agent
 
 
-def fetch_jobs(cookies_list: List[Dict[str, Any]], user_agent: str, page_number: int = 1) -> Optional[Dict[str, Any]]:
+def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int = 1) -> dict[str, Any] | None:
     """Fetch jobs using the API directly with the correct session data."""
     url = 'https://www.roberthalf.com/bin/jobSearchServlet'
 
@@ -409,7 +413,7 @@ def fetch_jobs(cookies_list: List[Dict[str, Any]], user_agent: str, page_number:
         logger.info(f"Fetching jobs page {page_number} using session UA: {user_agent}")
         response = requests.post(url, headers=headers, cookies=cookie_dict, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
-        
+
         # Try to parse response as JSON
         try:
             data = response.json()
@@ -417,7 +421,7 @@ def fetch_jobs(cookies_list: List[Dict[str, Any]], user_agent: str, page_number:
         except json.JSONDecodeError:
             logger.warning("Failed to parse API response as JSON. Session may be invalid.")
             return None
-            
+
     except requests.exceptions.HTTPError as http_err:
         if response.status_code in (401, 403, 500):
             logger.warning("Session appears to be invalid or expired")
@@ -431,7 +435,7 @@ def fetch_jobs(cookies_list: List[Dict[str, Any]], user_agent: str, page_number:
         logger.error(f"Unexpected error fetching jobs page {page_number}: {e}")
         return None
 
-def fetch_with_retry(cookies_list: List[Dict[str, Any]], user_agent: str, page_number: int) -> Optional[Dict[str, Any]]:
+def fetch_with_retry(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int) -> dict[str, Any] | None:
     """Fetch jobs with exponential backoff retry logic."""
     base_wait_time = 5 # Initial wait time in seconds
     for attempt in range(MAX_RETRIES):
@@ -448,13 +452,13 @@ def fetch_with_retry(cookies_list: List[Dict[str, Any]], user_agent: str, page_n
     logger.error(f"All {MAX_RETRIES} retry attempts failed for page {page_number}.")
     return None
 
-def filter_jobs_by_state(jobs: List[Dict[str, Any]], state_code: str) -> List[Dict[str, Any]]:
+def filter_jobs_by_state(jobs: list[dict[str, Any]], state_code: str) -> list[dict[str, Any]]:
     """Filter jobs to only include positions in the specified state."""
     filtered_jobs = [job for job in jobs if job.get('stateprovince') == state_code]
     logger.info(f"Filtered {len(filtered_jobs)} {state_code} jobs from {len(jobs)} total jobs on page")
     return filtered_jobs
 
-def save_job_results(jobs_list: List[Dict[str, Any]], total_found: int, filename_prefix: str = "roberthalf") -> None:
+def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, filename_prefix: str = "roberthalf") -> None:
     """Save the final list of jobs to a JSON file inside the OUTPUT_DIR."""
     # Define the output directory using the constant
     output_dir = OUTPUT_DIR # Use the constant defined earlier
@@ -511,7 +515,7 @@ def scrape_roberthalf_jobs() -> None:
                 raise RuntimeError("Failed to obtain a valid session after fresh login attempt.")
             save_session_data(cookies, user_agent) # Save the newly obtained session
             session_cookies, session_user_agent = cookies, user_agent # Update variables
-            
+
             response_data = fetch_with_retry(session_cookies, session_user_agent, 1)
             if not response_data:
                 raise RuntimeError("Failed to fetch data even with newly obtained session")
@@ -533,8 +537,8 @@ def scrape_roberthalf_jobs() -> None:
                 if not is_valid:
                     logger.error("Session became invalid during pagination. Stopping.")
                     # Optionally: could try re-logging in here, but for now, we stop.
-                    # raise RuntimeError("Session became invalid during scraping") 
-                    break 
+                    # raise RuntimeError("Session became invalid during scraping")
+                    break
                 else:
                      logger.error(f"Session still seems valid, but failed to fetch page {page_number} after retries. Stopping.")
                      break # Stop if fetch fails for other reasons after retries
@@ -588,7 +592,7 @@ def scrape_roberthalf_jobs() -> None:
         logger.critical(f"An unexpected critical error occurred in the main process: {e}", exc_info=True) # Log traceback
     finally:
         end_time = time.time()
-        logger.info(f"--- Robert Half Job Scraper Finished ---")
+        logger.info("--- Robert Half Job Scraper Finished ---")
         logger.info(f"Total execution time: {end_time - start_time:.2f} seconds")
 
 
