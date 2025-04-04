@@ -97,6 +97,66 @@ python roberthalf_scraper.py
 *   If successful, a JSON file named `roberthalf_[state]_jobs_[timestamp].json` (e.g., `roberthalf_tx_jobs_20240827_103000.json`) will be created in the `output/` directory, containing the scraped job data.
 *   Session data (if enabled) will be stored in the `.session/` directory, using the filename specified by `SESSION_FILE`.
 
+## Automated Scheduling (systemd)
+
+For Linux systems using systemd, you can automate the scraper to run on a schedule using the provided user service and timer units. This runs the scraper every 2 hours between 7 AM and 9 PM.
+
+1.  **Ensure Prerequisites:**
+    *   Make sure the installation steps (cloning, dependencies, Playwright browsers, `.env` file) are complete.
+    *   The systemd units assume the script and its dependencies are runnable from the project's root directory (`/home/jstocks/PROJECTS/scrape-roberthalf` in the service file - adjust if your path differs).
+    *   Your user must be allowed to run long-running services (this is usually enabled by default). Check with `loginctl show-user $USER | grep Linger` - if it's `no`, run `loginctl enable-linger $USER`).
+
+2.  **Run the Installation Script:**
+    This script copies the unit files to the correct user directory (`~/.config/systemd/user/`), reloads the systemd user daemon, and enables/starts the timer.
+    ```bash
+    chmod +x install_systemd_user.sh
+    ./install_systemd_user.sh
+    ```
+
+3.  **Managing the Service/Timer:**
+    *   **Check Timer Status:** See when the timer is scheduled to run next.
+        ```bash
+        systemctl --user status roberthalf-scraper.timer
+        ```
+    *   **Check Last Service Run Status:** See if the last run succeeded or failed.
+        ```bash
+        systemctl --user status roberthalf-scraper.service
+        ```
+    *   **View Logs:** Tail the logs for the scraper service.
+        ```bash
+        journalctl --user -u roberthalf-scraper.service -f
+        ```
+    *   **List All User Timers:**
+        ```bash
+        systemctl --user list-timers
+        ```
+    *   **Stop the Timer:** To temporarily stop the scraper from running automatically:
+        ```bash
+        systemctl --user stop roberthalf-scraper.timer
+        ```
+    *   **Disable the Timer:** To prevent the timer from starting on boot:
+        ```bash
+        systemctl --user disable roberthalf-scraper.timer
+        ```
+    *   **Re-enable and Start:**
+        ```bash
+        systemctl --user enable --now roberthalf-scraper.timer
+        ```
+
+4.  **Uninstall:**
+    To remove the service and timer:
+    ```bash
+    # Stop and disable the timer
+    systemctl --user disable --now roberthalf-scraper.timer
+
+    # Remove the unit files
+    rm ~/.config/systemd/user/roberthalf-scraper.service
+    rm ~/.config/systemd/user/roberthalf-scraper.timer
+
+    # Reload the daemon
+    systemctl --user daemon-reload
+    ```
+
 ## Key Script Components
 
 *   **`login_and_get_session()`:** Handles the browser automation using Playwright to log into Robert Half and extract session cookies and the user agent used.

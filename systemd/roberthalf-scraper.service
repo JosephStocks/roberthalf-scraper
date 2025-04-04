@@ -1,0 +1,21 @@
+[Unit]
+Description=Robert Half Job Scraper (Run Once, Triggered by Timer)
+# This service is triggered by roberthalf-scraper.timer
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/jstocks/PROJECTS/scrape-roberthalf
+ExecStart=/home/jstocks/.local/bin/uv run python roberthalf_scraper.py 
+
+# Optional: Restart logic if a single run fails (timer won't retry automatically)
+Restart=on-failure
+RestartSec=30 
+
+# Optional: Resource limits
+# CPUQuota=50%
+# MemoryMax=512M 
+
+# Send output to journald
+StandardOutput=journal
+StandardError=journal

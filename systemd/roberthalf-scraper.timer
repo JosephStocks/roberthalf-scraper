@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Robert Half Scraper every 2 hours from 7am to 9pm
+
+[Timer]
+OnCalendar=*-*-* 07,09,11,13,15,17,19,21:00:00
+RandomizedDelaySec=180
+Persistent=true
+Unit=roberthalf-scraper.service
+
+[Install]
+WantedBy=timers.target
