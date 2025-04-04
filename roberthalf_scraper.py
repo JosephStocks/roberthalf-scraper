@@ -425,9 +425,24 @@ def filter_jobs_by_state(jobs: List[Dict[str, Any]], state_code: str) -> List[Di
     return filtered_jobs
 
 def save_job_results(jobs_list: List[Dict[str, Any]], total_found: int, filename_prefix: str = "roberthalf") -> None:
-    """Save the final list of jobs to a JSON file."""
+    """Save the final list of jobs to a JSON file inside the 'output' directory."""
+    
+    # Define the output directory
+    output_dir = Path("output")
+    
+    # Create the output directory if it doesn't exist
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Ensured output directory exists: {output_dir.resolve()}")
+    except OSError as e:
+        logger.error(f"Failed to create output directory {output_dir}: {e}")
+        # Optionally, decide whether to proceed or raise an error
+        # For now, we'll attempt to save anyway, but it might fail if dir creation failed
+    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = f"{filename_prefix}_{FILTER_STATE.lower()}_jobs_{timestamp}.json"
+    # Construct the filename and then the full path within the output directory
+    filename = f"{filename_prefix}_{FILTER_STATE.lower()}_jobs_{timestamp}.json"
+    output_file_path = output_dir / filename
 
     results_data = {
         "jobs": jobs_list,
@@ -440,12 +455,13 @@ def save_job_results(jobs_list: List[Dict[str, Any]], total_found: int, filename
     }
 
     try:
-        with open(output_file, 'w', encoding='utf-8') as f:
+        with open(output_file_path, 'w', encoding='utf-8') as f:
             json.dump(results_data, f, indent=2, ensure_ascii=False)
-        logger.info(f"Saved {len(jobs_list)} jobs to {output_file}")
+        # Log the full path
+        logger.info(f"Saved {len(jobs_list)} jobs to {output_file_path.resolve()}") 
     except Exception as e:
-        logger.error(f"Failed to save job results to {output_file}: {e}")
-
+        # Log the full path in case of error too
+        logger.error(f"Failed to save job results to {output_file_path.resolve()}: {e}")
 
 def scrape_roberthalf_jobs() -> None:
     """Main function to orchestrate the Robert Half job scraping."""
