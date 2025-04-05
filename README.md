@@ -2,13 +2,21 @@
 
 ## Description
 
-This Python script scrapes job listings from Robert Half's website. It automates the login process using Playwright, maintains session persistence, and then directly calls the internal job search API (`/bin/jobSearchServlet`) to retrieve job postings based on configured filters (like state and posting period). The results are saved to a JSON file.
+This Python script scrapes job listings from Robert Half's website. It automates the login process using Playwright, maintains session persistence, and then directly calls the internal job search API (`/bin/jobSearchServlet`) to retrieve job postings based on configured filters (like state and posting period). The script fetches both state-specific and remote US jobs, combining them into a single result set. The results are saved to a JSON file and notifications are sent via Pushover.
 
 ## Features
 
 *   **Automated Login:** Uses Playwright to handle the Robert Half login process.
 *   **Session Persistence:** Saves and reloads login session data (cookies and user agent) to minimize repeated logins. Session validity is checked and refreshed if expired or invalid.
 *   **Direct API Interaction:** Fetches job data efficiently by calling the internal API endpoint directly after authentication.
+*   **Smart Job Filtering:** 
+    * Filters for jobs in the specified state (`FILTER_STATE`)
+    * Includes all US-based remote jobs regardless of state
+    * Combines and deduplicates results
+*   **Push Notifications:** Sends detailed job notifications via Pushover, including:
+    * Separate counts for state-specific and remote jobs
+    * Location details (Remote or City, State)
+    * Salary information when available
 *   **Configurable Filtering:** Allows filtering jobs by State (`FILTER_STATE`) and Job Posting Period (`JOB_POST_PERIOD`) via environment variables.
 *   **Pagination Handling:** Automatically iterates through all pages of job results from the API.
 *   **Proxy Support:** Configurable support for using HTTP proxies (including authentication).
@@ -64,6 +72,8 @@ Configuration is managed via environment variables, typically stored in a `.env`
 | :---------------------- | :-------------------------------------------------------------------------------------------- | :--------------------------- |
 | `ROBERTHALF_USERNAME`   | **Required.** Your Robert Half login email.                                                   | `your.email@example.com`     |
 | `ROBERTHALF_PASSWORD`   | **Required.** Your Robert Half login password.                                                | `your_password_here`         |
+| `PUSHOVER_API_TOKEN`    | **Required.** Your Pushover application token for notifications.                              | `your_pushover_token`        |
+| `PUSHOVER_USER_KEY_JOE` | **Required.** Pushover user key for notifications.                                           | `your_pushover_user_key`     |
 | `USE_PROXY`             | Set to `true` to enable proxy usage, `false` to disable.                                      | `false`                      |
 | `PROXY_SERVER`          | Proxy server address and port (e.g., `host:port`).                                            | `geo.iproyal.com:12321`      |
 | `PROXY_AUTH`            | Proxy authentication in `username:password` format.                                           | `username:password...`       |
@@ -71,7 +81,7 @@ Configuration is managed via environment variables, typically stored in a `.env`
 | `SAVE_SESSION`          | `true` to save/load session data, `false` otherwise.                                          | `true`                       |
 | `SESSION_FILE`          | Filename for storing session data (cookies, user agent, timestamp).                           | `session_data.json`          |
 | `SESSION_MAX_AGE_HOURS` | Maximum age of saved session data in hours before forcing a new login.                        | `12`                         |
-| `FILTER_STATE`          | Two-letter state code to filter jobs (e.g., `TX`, `CA`, `PA`).                                | `TX`                         |
+| `FILTER_STATE`          | Two-letter state code to filter jobs (e.g., `TX`, `CA`, `PA`). Also includes all US remote jobs. | `TX`                         |
 | `JOB_POST_PERIOD`       | Time period for job postings (e.g., `PAST_24_HOURS`, `PAST_3_DAYS`, `PAST_WEEK`, `ALL`).      | `PAST_24_HOURS`              |
 | `HEADLESS_BROWSER`      | `true` to run Playwright browser without UI, `false` for visible browser (useful for debug).    | `true`                       |
 | `ROTATE_USER_AGENT`     | `true` to use random user agents from a predefined list, `false` to use `DEFAULT_USER_AGENT`. | `false`                      |
@@ -82,6 +92,33 @@ Configuration is managed via environment variables, typically stored in a `.env`
 | `MAX_RETRIES`           | Maximum number of retry attempts for failed API requests.                                     | `3`                          |
 | `BROWSER_TIMEOUT_MS`    | Timeout for Playwright browser operations in milliseconds.                                    | `60000` (60 seconds)         |
 | `REQUEST_TIMEOUT_SECONDS`| Timeout for direct HTTP API requests in seconds.                                              | `30`                         |
+
+## Output Format
+
+The script saves results to a JSON file with the following structure:
+```json
+{
+    "jobs": [...],
+    "timestamp": "20240327_103000",
+    "total_tx_jobs": 5,
+    "total_remote_jobs": 14,
+    "total_jobs_found_in_period": 250,
+    "job_post_period_filter": "PAST_24_HOURS",
+    "state_filter": "TX",
+    "status": "Completed"
+}
+```
+
+## Push Notifications
+
+The script sends notifications via Pushover with the following information:
+- Number of new state-specific jobs found
+- Number of new remote jobs found
+- Details of up to 5 latest positions including:
+  - Job title
+  - Location (either "Remote" or "City, State")
+  - Salary range and period (if available)
+- Link to view all technology jobs on Robert Half
 
 ## Usage
 
