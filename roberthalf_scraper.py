@@ -15,6 +15,7 @@ from playwright.sync_api import (
 )
 
 from config_loader import load_prod_config
+from pushnotify import send_pushover_notification
 from utils import get_proxy_config
 
 # --- Logging Setup ---
@@ -80,6 +81,9 @@ PAGE_DELAY_MAX = float(os.getenv('PAGE_DELAY_MAX', '15'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
 BROWSER_TIMEOUT_MS = int(os.getenv('BROWSER_TIMEOUT_MS', '60000')) # Use updated env var name
 REQUEST_TIMEOUT_SECONDS = int(os.getenv('REQUEST_TIMEOUT_SECONDS', '30')) # Use updated env var name
+
+# Test mode - set to true to force notifications for testing
+TEST_MODE = os.getenv('TEST_MODE', 'false').lower() == 'true'
 
 # --- Helper Functions ---
 
@@ -374,7 +378,40 @@ def get_or_refresh_session() -> tuple[list[dict[str, Any]], str]:
     return cookies, user_agent
 
 
-def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int = 1) -> dict[str, Any] | None:
+def filter_jobs_by_state(jobs: list[dict[str, Any]], state_code: str) -> list[dict[str, Any]]:
+    """Filter jobs to only include positions in the specified state or remote jobs."""
+    # Debug log all jobs before filtering
+    logger.info(f"Before filtering - received {len(jobs)} jobs:")
+    for job in jobs:
+        logger.info(f"Job ID: {job.get('unique_job_number', 'N/A')}, "
+                   f"Title: {job.get('jobtitle', 'N/A')}, "
+                   f"State: {job.get('stateprovince', 'N/A')}, "
+                   f"Remote: {job.get('remote', 'N/A')}, "
+                   f"Country: {job.get('country', 'N/A')}")
+
+    filtered_jobs = [
+        job for job in jobs 
+        if (job.get('stateprovince') == state_code) or  # Jobs in Texas
+        (job.get('remote', '').lower() == 'yes' and job.get('country', '').lower() == 'us')  # US remote jobs
+    ]
+
+    # Count types of jobs for logging
+    state_jobs = len([j for j in filtered_jobs if j.get('stateprovince') == state_code])
+    remote_jobs = len([j for j in filtered_jobs if j.get('remote', '').lower() == 'yes'])
+
+    # Debug log filtered jobs
+    logger.info(f"After filtering - kept {len(filtered_jobs)} jobs:")
+    for job in filtered_jobs:
+        logger.info(f"Job ID: {job.get('unique_job_number', 'N/A')}, "
+                   f"Title: {job.get('jobtitle', 'N/A')}, "
+                   f"State: {job.get('stateprovince', 'N/A')}, "
+                   f"Remote: {job.get('remote', 'N/A')}, "
+                   f"Country: {job.get('country', 'N/A')}")
+
+    logger.info(f"Filtered {state_jobs} {state_code} jobs and {remote_jobs} remote jobs from {len(jobs)} total jobs on page")
+    return filtered_jobs
+
+def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int = 1, is_remote: bool = False) -> dict[str, Any] | None:
     """Fetch jobs using the API directly with the correct session data."""
     url = 'https://www.roberthalf.com/bin/jobSearchServlet'
 
@@ -396,7 +433,7 @@ def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number:
         "keywords": "",
         "location": "",
         "distance": "50",
-        "remote": "No",
+        "remote": "yes" if is_remote else "No",
         "remoteText": "",
         "languagecodes": [],
         "source": ["Salesforce"],
@@ -415,7 +452,7 @@ def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number:
     }
 
     try:
-        logger.info(f"Fetching jobs page {page_number} using session UA: {user_agent}")
+        logger.info(f"Fetching {'remote' if is_remote else 'local'} jobs page {page_number} using session UA: {user_agent}")
         response = requests.post(url, headers=headers, cookies=cookie_dict, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
 
@@ -440,34 +477,32 @@ def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number:
         logger.error(f"Unexpected error fetching jobs page {page_number}: {e}")
         return None
 
-def fetch_with_retry(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int) -> dict[str, Any] | None:
+def fetch_with_retry(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int, is_remote: bool = False) -> dict[str, Any] | None:
     """Fetch jobs with exponential backoff retry logic."""
     base_wait_time = 5 # Initial wait time in seconds
     for attempt in range(MAX_RETRIES):
-        result = fetch_jobs(cookies_list, user_agent, page_number)
+        result = fetch_jobs(cookies_list, user_agent, page_number, is_remote)
         if result is not None:
             return result # Success
 
         # Failed, calculate wait time and retry
         wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, base_wait_time) # Exponential backoff + jitter
-        logger.warning(f"API fetch attempt {attempt + 1}/{MAX_RETRIES} failed for page {page_number}. Retrying in {wait_time:.2f} seconds...")
+        logger.warning(f"API fetch attempt {attempt + 1}/{MAX_RETRIES} failed for {'remote' if is_remote else 'local'} page {page_number}. Retrying in {wait_time:.2f} seconds...")
         time.sleep(wait_time)
 
     # All retries failed
-    logger.error(f"All {MAX_RETRIES} retry attempts failed for page {page_number}.")
+    logger.error(f"All {MAX_RETRIES} retry attempts failed for {'remote' if is_remote else 'local'} page {page_number}.")
     return None
-
-def filter_jobs_by_state(jobs: list[dict[str, Any]], state_code: str) -> list[dict[str, Any]]:
-    """Filter jobs to only include positions in the specified state."""
-    filtered_jobs = [job for job in jobs if job.get('stateprovince') == state_code]
-    logger.info(f"Filtered {len(filtered_jobs)} {state_code} jobs from {len(jobs)} total jobs on page")
-    return filtered_jobs
 
 def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, filename_prefix: str = "roberthalf") -> None:
     """Save the final list of jobs to a JSON file inside the OUTPUT_DIR."""
     # Define the output directory using the constant
     output_dir = OUTPUT_DIR # Use the constant defined earlier
 
+    # Count TX and remote jobs
+    tx_jobs = [job for job in jobs_list if job.get('stateprovince') == FILTER_STATE]
+    remote_jobs = [job for job in jobs_list if job.get('remote', '').lower() == 'yes']
+    
     # Ensure the output directory exists (redundant if created early, but safe)
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -484,7 +519,8 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, filename
     results_data = {
         "jobs": jobs_list,
         "timestamp": timestamp,
-        f"total_{FILTER_STATE.lower()}_jobs_scraped": len(jobs_list),
+        f"total_{FILTER_STATE.lower()}_jobs": len(tx_jobs),
+        "total_remote_jobs": len(remote_jobs),
         "total_jobs_found_in_period": total_found, # Total from API response metadata
         "job_post_period_filter": JOB_POST_PERIOD,
         "state_filter": FILTER_STATE,
@@ -495,7 +531,59 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, filename
         with open(output_file_path, 'w', encoding='utf-8') as f:
             json.dump(results_data, f, indent=2, ensure_ascii=False)
         # Log the full path
-        logger.info(f"Saved {len(jobs_list)} jobs to {output_file_path.resolve()}")
+        logger.info(f"Saved {len(jobs_list)} jobs ({len(tx_jobs)} in {FILTER_STATE}, {len(remote_jobs)} remote) to {output_file_path.resolve()}")
+
+        # Send notification if jobs were found or in test mode
+        if len(jobs_list) > 0 or TEST_MODE:
+            # Format job details for notification
+            job_details = []
+            for job in jobs_list[:5]:
+                title = job.get('jobtitle', 'Unknown Title')
+                city = job.get('city', 'Unknown City')
+                state = job.get('stateprovince', '')
+                is_remote = job.get('remote', '').lower() == 'yes'
+                pay_min = job.get('payrate_min')
+                pay_max = job.get('payrate_max')
+                pay_period = job.get('payrate_period', '').lower()
+                
+                location = f"Remote" if is_remote else f"{city}, {state}"
+                detail = f"• {title} ({location})"
+                if pay_min and pay_max and pay_period:
+                    detail += f"\n  ${int(float(pay_min)):,} - ${int(float(pay_max)):,}/{pay_period}"
+                job_details.append(detail)
+            
+            details_text = '\n'.join(job_details)
+            remaining = len(jobs_list) - 5 if len(jobs_list) > 5 else 0
+            
+            # Construct notification message
+            if TEST_MODE and len(jobs_list) == 0:
+                message = (
+                    f"🧪 TEST MODE: Simulating job notification!\n\n"
+                    f"Found 3 test jobs in {FILTER_STATE}:\n"
+                    f"• Test Software Engineer (Austin)\n  $120,000 - $150,000/yearly\n"
+                    f"• Test Developer (Dallas)\n  $130,000 - $160,000/yearly\n"
+                    f"• Test DevOps Engineer (Houston)\n  $140,000 - $170,000/yearly"
+                )
+            else:
+                message = f"Found {len(tx_jobs)} new {FILTER_STATE} jobs and {len(remote_jobs)} remote jobs in the {JOB_POST_PERIOD.lower().replace('_', ' ')}!"
+                if job_details:
+                    message += f"\n\nLatest positions:\n{details_text}"
+                if remaining > 0:
+                    message += f"\n\n...and {remaining} more jobs"
+                message += "\n\nClick to view all Technology jobs on Robert Half"
+
+            try:
+                send_pushover_notification(
+                    message=message,
+                    user="Joe",
+                    title=f"Robert Half {FILTER_STATE} & Remote Jobs",
+                    url="https://www.roberthalf.com/us/en/jobs?lobid=RHT",
+                    url_title="View Technology Jobs"
+                )
+                logger.info("Push notification sent successfully")
+            except Exception as notify_err:
+                logger.error(f"Failed to send push notification: {notify_err}")
+
     except Exception as e:
         # Log the full path in case of error too
         logger.error(f"Failed to save job results to {output_file_path.resolve()}: {e}")
@@ -509,92 +597,85 @@ def scrape_roberthalf_jobs() -> None:
         # Get or refresh session (cookies + user_agent)
         session_cookies, session_user_agent = get_or_refresh_session() # Uses new session functions
 
-        # Try to fetch first page
-        response_data = fetch_with_retry(session_cookies, session_user_agent, 1)
-
-        # If first page fails, try getting a new session
-        if not response_data:
-            logger.info("Initial fetch failed with existing session, getting new session")
-            cookies, user_agent = login_and_get_session() # Get new session via login
-            if not cookies or not user_agent:
-                raise RuntimeError("Failed to obtain a valid session after fresh login attempt.")
-            save_session_data(cookies, user_agent) # Save the newly obtained session
-            session_cookies, session_user_agent = cookies, user_agent # Update variables
-
-            response_data = fetch_with_retry(session_cookies, session_user_agent, 1)
-            if not response_data:
-                raise RuntimeError("Failed to fetch data even with newly obtained session")
-
         all_filtered_jobs = []
-        page_number = 1
-        total_jobs_api = None
+        total_jobs_api = 0
 
-        while True:
-            logger.info(f"--- Processing Page {page_number} ---")
+        # Fetch both local and remote jobs
+        for is_remote in [False, True]:
+            page_number = 1
+            jobs_found = None
 
-            # Fetch data for the current page with retries
-            response_data = fetch_with_retry(session_cookies, session_user_agent, page_number)
+            while True:
+                logger.info(f"--- Processing {'Remote' if is_remote else 'Local'} Page {page_number} ---")
 
-            if not response_data:
-                # Check if the session might be invalid here as well
-                logger.warning(f"Fetch failed for page {page_number}. Trying to validate session.")
-                is_valid = validate_session(session_cookies, session_user_agent)
-                if not is_valid:
-                    logger.error("Session became invalid during pagination. Stopping.")
-                    # Optionally: could try re-logging in here, but for now, we stop.
-                    # raise RuntimeError("Session became invalid during scraping")
+                # Fetch data for the current page with retries
+                response_data = fetch_with_retry(session_cookies, session_user_agent, page_number, is_remote)
+
+                if not response_data:
+                    # Check if the session might be invalid
+                    logger.warning(f"Fetch failed for {'remote' if is_remote else 'local'} page {page_number}. Trying to validate session.")
+                    is_valid = validate_session(session_cookies, session_user_agent)
+                    if not is_valid:
+                        logger.error("Session became invalid during pagination. Stopping.")
+                        break
+                    else:
+                        logger.error(f"Session still seems valid, but failed to fetch page {page_number} after retries. Stopping.")
+                        break
+
+                # Extract total count
+                if jobs_found is None:
+                    try:
+                        jobs_found = int(response_data.get('found', 0))
+                        total_jobs_api += jobs_found
+                        logger.info(f"API reports {jobs_found} total {'remote' if is_remote else 'local'} jobs found for period '{JOB_POST_PERIOD}'")
+                    except (ValueError, TypeError):
+                        logger.warning("Could not parse 'found' count from API response.")
+                        jobs_found = -1
+
+                jobs_on_page = response_data.get('jobs', [])
+                if not jobs_on_page:
+                    logger.info(f"No more {'remote' if is_remote else 'local'} jobs found on page {page_number}. Reached the end.")
                     break
-                else:
-                     logger.error(f"Session still seems valid, but failed to fetch page {page_number} after retries. Stopping.")
-                     break # Stop if fetch fails for other reasons after retries
 
+                logger.info(f"Received {len(jobs_on_page)} {'remote' if is_remote else 'local'} jobs on page {page_number}.")
 
-            # Extract total count on the first page
-            if total_jobs_api is None:
-                try:
-                    total_jobs_api = int(response_data.get('found', 0))
-                    logger.info(f"API reports {total_jobs_api} total jobs found for period '{JOB_POST_PERIOD}'")
-                except (ValueError, TypeError):
-                    logger.warning("Could not parse 'found' count from API response.")
-                    total_jobs_api = -1 # Indicate unknown
+                # Filter jobs by state (or remote)
+                state_jobs_on_page = filter_jobs_by_state(jobs_on_page, FILTER_STATE)
+                all_filtered_jobs.extend(state_jobs_on_page)
 
-            jobs_on_page = response_data.get('jobs', [])
-            if not jobs_on_page:
-                logger.info(f"No more jobs found on page {page_number}. Reached the end.")
-                break # Exit loop if no jobs are returned
+                # Check if this was the last page
+                if len(jobs_on_page) < 25:
+                    logger.info(f"Received less than assumed page size ({len(jobs_on_page)} < 25). Assuming last page.")
+                    break
 
-            logger.info(f"Received {len(jobs_on_page)} jobs on page {page_number}.")
+                page_number += 1
 
-            # Filter jobs by state
-            state_jobs_on_page = filter_jobs_by_state(jobs_on_page, FILTER_STATE)
-            all_filtered_jobs.extend(state_jobs_on_page)
+                # Add delays between requests
+                page_delay = random.uniform(PAGE_DELAY_MIN, PAGE_DELAY_MAX)
+                logger.info(f"Waiting {page_delay:.2f} seconds before fetching page {page_number}")
+                time.sleep(page_delay)
+                time.sleep(REQUEST_DELAY_SECONDS)
 
-            # Check if this was the last page based on page size
-            # (The API might not always return exactly 'pagesize' even if more exist,
-            # but if it returns less, it's definitely the end)
-            if len(jobs_on_page) < 25: # Assuming page size is 25 (should ideally use constant or config)
-                logger.info(f"Received less than assumed page size ({len(jobs_on_page)} < 25). Assuming last page.")
-                break
+            # Add delay between remote and local job fetching
+            if is_remote is False:  # Only delay between switching from local to remote
+                switch_delay = random.uniform(PAGE_DELAY_MIN * 2, PAGE_DELAY_MAX * 2)
+                logger.info(f"Switching to remote jobs. Waiting {switch_delay:.2f} seconds...")
+                time.sleep(switch_delay)
 
-            page_number += 1
+        # Remove any duplicate jobs that might appear in both remote and local searches
+        unique_jobs = {job.get('unique_job_number'): job for job in all_filtered_jobs if job.get('unique_job_number')}.values()
+        all_filtered_jobs = list(unique_jobs)
+        logger.info(f"Found {len(all_filtered_jobs)} unique jobs after removing duplicates")
 
-            # Add variable delay between page requests
-            page_delay = random.uniform(PAGE_DELAY_MIN, PAGE_DELAY_MAX)
-            logger.info(f"Waiting {page_delay:.2f} seconds before fetching page {page_number}")
-            time.sleep(page_delay)
-            # Optional: Add general request delay too?
-            time.sleep(REQUEST_DELAY_SECONDS) # Adding the general request delay as well
-
-
-        # --- Save final results ---
-        save_job_results(all_filtered_jobs, total_jobs_api if total_jobs_api is not None else 0)
+        # Save final results
+        save_job_results(all_filtered_jobs, total_jobs_api)
 
     except RuntimeError as rt_err:
-         logger.critical(f"Runtime error, likely session failure: {rt_err}")
+        logger.critical(f"Runtime error, likely session failure: {rt_err}")
     except ValueError as val_err:
         logger.critical(f"Configuration error: {val_err}")
     except Exception as e:
-        logger.critical(f"An unexpected critical error occurred in the main process: {e}", exc_info=True) # Log traceback
+        logger.critical(f"An unexpected critical error occurred in the main process: {e}", exc_info=True)
     finally:
         end_time = time.time()
         logger.info("--- Robert Half Job Scraper Finished ---")
