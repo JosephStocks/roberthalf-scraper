@@ -18,72 +18,59 @@ from config_loader import load_prod_config
 from pushnotify import send_pushover_notification
 from utils import get_proxy_config
 
+# --- Constants ---
+# Define base directories *before* logger setup uses them
+LOG_DIR = Path("logs")
+SESSION_DIR = Path(".session")
+OUTPUT_DIR = Path("output")
+
+# Create directories if they don't exist early on
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+SESSION_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 # --- Logging Setup ---
 def setup_logging():
     """Set up logging configuration to log to 'logs/scraper.log'."""
     log_file_path = LOG_DIR / "scraper.log"
 
-    # Ensure log directory exists (redundant if created above, but safe)
-    try:
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        # Use print as logger not fully setup yet, but this might still be too late
-        # if LOG_DIR itself relies on an env var not yet loaded. Consider hardcoding
-        # or delaying the file handler setup if this becomes an issue.
-        print(f"WARNING: Could not create log directory {LOG_DIR}: {e}. Logging to file might fail.")
-
     logging.basicConfig(
         level=logging.INFO,
-        format='%(levelname)s [%(filename)s:%(lineno)d] - %(message)s', # Added filename/lineno
+        format='%(levelname)s [%(filename)s:%(lineno)d] - %(message)s',
         handlers=[
-            logging.FileHandler(log_file_path, mode='w'), # Use the path object
+            logging.FileHandler(log_file_path, mode='w'),
             logging.StreamHandler()
         ]
     )
-    # Quieter libraries
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("playwright").setLevel(logging.WARNING)
-    # Use __name__ for the logger specific to this module
-    return logging.getLogger(__name__) # Changed from "roberthalf_scraper" to __name__
+    return logging.getLogger(__name__)
 
-# --- Constants ---
-# Define base directories *before* logger setup uses them
-LOG_DIR = Path("logs")
-SESSION_DIR = Path(".session")
-OUTPUT_DIR = Path("output") # Add output dir constant for consistency
-
-# Create directories if they don't exist early on (optional, could also do it lazily)
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-SESSION_DIR.mkdir(parents=True, exist_ok=True)
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True) # Ensure output dir is also created here
-
-# Setup logger *after* LOG_DIR is defined, but *before* loading config that might use logging
+# Setup logger *after* LOG_DIR is defined
 logger = setup_logging()
 
 # Load config *after* logger is ready
-load_prod_config()
+config = load_prod_config()
 
 # Update SESSION_FILE default to be inside SESSION_DIR
 DEFAULT_SESSION_FILENAME = "session_data.json"
-SESSION_FILE_PATH = SESSION_DIR / os.getenv('SESSION_FILE', DEFAULT_SESSION_FILENAME)
+SESSION_FILE_PATH = SESSION_DIR / config.get('SESSION_FILE', DEFAULT_SESSION_FILENAME)
 
-SAVE_SESSION = os.getenv('SAVE_SESSION', 'true').lower() == 'true' # Use updated env var name from review
-# SESSION_FILE = os.getenv('SESSION_COOKIES_FILE', 'session_data.json') # Rename to reflect it holds more than cookies # OLD - Remove direct use of filename string
-SESSION_MAX_AGE_HOURS = int(os.getenv('SESSION_MAX_AGE_HOURS', '12'))
-FILTER_STATE = os.getenv('FILTER_STATE', 'TX')
-JOB_POST_PERIOD = os.getenv('JOB_POST_PERIOD', 'PAST_24_HOURS') # e.g., PAST_24_HOURS, PAST_3_DAYS, PAST_WEEK, ALL
-HEADLESS_BROWSER = os.getenv('HEADLESS_BROWSER', 'true').lower() == 'true' # Use updated env var name from review
-ROTATE_USER_AGENT = os.getenv('ROTATE_USER_AGENT', 'true').lower() == 'true'
-DEFAULT_USER_AGENT = os.getenv('DEFAULT_USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36') # Use updated env var name
-REQUEST_DELAY_SECONDS = float(os.getenv('REQUEST_DELAY_SECONDS', '2')) # Use updated env var name
-PAGE_DELAY_MIN = float(os.getenv('PAGE_DELAY_MIN', '5'))
-PAGE_DELAY_MAX = float(os.getenv('PAGE_DELAY_MAX', '15'))
-MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
-BROWSER_TIMEOUT_MS = int(os.getenv('BROWSER_TIMEOUT_MS', '60000')) # Use updated env var name
-REQUEST_TIMEOUT_SECONDS = int(os.getenv('REQUEST_TIMEOUT_SECONDS', '30')) # Use updated env var name
-
-# Test mode - set to true to force notifications for testing
-TEST_MODE = os.getenv('TEST_MODE', 'false').lower() == 'true'
+# Load configuration values with validation
+SAVE_SESSION = config.get('SAVE_SESSION', True)
+SESSION_MAX_AGE_HOURS = config.get('SESSION_MAX_AGE_HOURS', 12)
+FILTER_STATE = config.get('FILTER_STATE', 'TX')
+JOB_POST_PERIOD = config.get('JOB_POST_PERIOD', 'PAST_24_HOURS')
+HEADLESS_BROWSER = config.get('HEADLESS_BROWSER', True)
+ROTATE_USER_AGENT = config.get('ROTATE_USER_AGENT', False)
+DEFAULT_USER_AGENT = config.get('DEFAULT_USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36')
+REQUEST_DELAY_SECONDS = config.get('REQUEST_DELAY_SECONDS', 2.0)
+PAGE_DELAY_MIN = config.get('PAGE_DELAY_MIN', 5.0)
+PAGE_DELAY_MAX = config.get('PAGE_DELAY_MAX', 15.0)
+MAX_RETRIES = config.get('MAX_RETRIES', 3)
+BROWSER_TIMEOUT_MS = config.get('BROWSER_TIMEOUT_MS', 60000)
+REQUEST_TIMEOUT_SECONDS = config.get('REQUEST_TIMEOUT_SECONDS', 30)
+TEST_MODE = config.get('TEST_MODE', False)
 
 # --- Helper Functions ---
 

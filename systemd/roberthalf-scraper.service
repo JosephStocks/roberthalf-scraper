@@ -5,17 +5,31 @@ After=network.target
 
 [Service]
 Type=simple
+User=jstocks
+Group=jstocks
 WorkingDirectory=/home/jstocks/PROJECTS/scrape-roberthalf
-ExecStart=/home/jstocks/.local/bin/uv run python roberthalf_scraper.py 
 
-# Optional: Restart logic if a single run fails (timer won't retry automatically)
+# Environment setup
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/jstocks/PROJECTS/scrape-roberthalf
+EnvironmentFile=/home/jstocks/PROJECTS/scrape-roberthalf/.env
+
+# Execution
+ExecStart=/home/jstocks/.local/bin/uv run python roberthalf_scraper.py
+
+# Restart configuration
 Restart=on-failure
-RestartSec=30 
+RestartSec=30
+StartLimitInterval=1800
+StartLimitBurst=5
 
-# Optional: Resource limits
-# CPUQuota=50%
-# MemoryMax=512M 
+# Resource limits
+CPUQuota=50%
+MemoryMax=512M
 
-# Send output to journald
+# Logging
 StandardOutput=journal
 StandardError=journal
+
+[Install]
+WantedBy=default.target
