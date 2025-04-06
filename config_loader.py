@@ -4,7 +4,7 @@ Configuration loader utility for different environments.
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -28,7 +28,7 @@ def validate_env_value(name: str, value: str | None) -> str | None:
     """Validate and clean environment variable value."""
     if value is None:
         return None
-    
+
     # Strip any trailing comments and whitespace
     cleaned_value = value.split('#')[0].strip()
     return cleaned_value if cleaned_value else None
@@ -47,12 +47,12 @@ def get_env_value(name: str, default: str | None = None) -> str | None:
     return cleaned_value
 
 
-def load_test_config() -> Dict[str, Any]:
+def load_test_config() -> dict[str, Any]:
     """Load test environment configuration from .env.test"""
     _load_env('.env.test', override=True)
     return load_config_values()
 
-def load_prod_config() -> Dict[str, Any]:
+def load_prod_config() -> dict[str, Any]:
     """Load production environment configuration from .env"""
     _load_env('.env', override=False) # Don't override existing env vars for prod
     return load_config_values()
@@ -80,7 +80,7 @@ def _get_typed_env_value(key: str, default: Any, value_type: type) -> Any:
         return default
 
 
-def load_config_values() -> Dict[str, Any]:
+def load_config_values() -> dict[str, Any]:
     """Load, validate, and type-convert all configuration values from environment variables."""
     config = {}
     logger.info("Loading configuration values...")

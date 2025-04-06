@@ -377,7 +377,7 @@ def filter_jobs_by_state(jobs: list[dict[str, Any]], state_code: str) -> list[di
                    f"Country: {job.get('country', 'N/A')}")
 
     filtered_jobs = [
-        job for job in jobs 
+        job for job in jobs
         if (job.get('stateprovince') == state_code) or  # Jobs in Texas
         (job.get('remote', '').lower() == 'yes' and job.get('country', '').lower() == 'us')  # US remote jobs
     ]
@@ -489,7 +489,7 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, filename
     # Count TX and remote jobs
     tx_jobs = [job for job in jobs_list if job.get('stateprovince') == FILTER_STATE]
     remote_jobs = [job for job in jobs_list if job.get('remote', '').lower() == 'yes']
-    
+
     # Ensure the output directory exists (redundant if created early, but safe)
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -532,16 +532,16 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, filename
                 pay_min = job.get('payrate_min')
                 pay_max = job.get('payrate_max')
                 pay_period = job.get('payrate_period', '').lower()
-                
-                location = f"Remote" if is_remote else f"{city}, {state}"
+
+                location = "Remote" if is_remote else f"{city}, {state}"
                 detail = f"• {title} ({location})"
                 if pay_min and pay_max and pay_period:
                     detail += f"\n  ${int(float(pay_min)):,} - ${int(float(pay_max)):,}/{pay_period}"
                 job_details.append(detail)
-            
+
             details_text = '\n'.join(job_details)
             remaining = len(jobs_list) - 5 if len(jobs_list) > 5 else 0
-            
+
             # Construct notification message
             if TEST_MODE and len(jobs_list) == 0:
                 message = (
