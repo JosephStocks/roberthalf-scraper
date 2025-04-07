@@ -560,7 +560,7 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
         <tbody>
 """
     # Sort jobs by posted date descending, then title
-    jobs_list.sort(key=lambda x: (x.get('original_published_date', '1970-01-01'), x.get('jobtitle', '')), reverse=True)
+    jobs_list.sort(key=lambda x: (x.get('date_posted', '1970-01-01'), x.get('jobtitle', '')), reverse=True)
 
     for job in jobs_list:
         title = job.get('jobtitle', 'N/A')
@@ -770,7 +770,7 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, filename
         # Format job details for notification (same as before)
         job_details = []
         # Sort for notification consistency (same key as HTML)
-        jobs_list.sort(key=lambda x: (x.get('original_published_date', '1970-01-01'), x.get('jobtitle', '')), reverse=True)
+        jobs_list.sort(key=lambda x: (x.get('date_posted', '1970-01-01'), x.get('jobtitle', '')), reverse=True)
         for job in jobs_list[:5]:
             # ... (rest of job detail formatting logic remains unchanged) ...
             title = job.get('jobtitle', 'Unknown Title')
