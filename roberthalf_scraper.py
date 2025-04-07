@@ -506,6 +506,29 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
         a:hover {{ text-decoration: underline; }}
         .pay-rate {{ white-space: nowrap; }}
         .location {{ white-space: nowrap; }}
+        details {{ margin: 10px 0; }}
+        summary {{ 
+            cursor: pointer;
+            color: #007bff;
+            padding: 8px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+        }}
+        summary:hover {{
+            background-color: #e9ecef;
+        }}
+        .job-description {{
+            padding: 15px;
+            background-color: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            margin-top: 8px;
+        }}
+        .description-row td {{
+            padding: 0 8px;
+            background-color: #fff;
+        }}
     </style>
 </head>
 <body>
@@ -559,6 +582,16 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
                 <td class="pay-rate">{pay_rate_str}</td>
                 <td>{job_id}</td>
                 <td>{posted_date_str}</td>
+            </tr>
+            <tr class="description-row">
+                <td colspan="5">
+                    <details>
+                        <summary>View Job Details</summary>
+                        <div class="job-description">
+                            {job.get('description', 'No description available.')}
+                        </div>
+                    </details>
+                </td>
             </tr>
 """
 
