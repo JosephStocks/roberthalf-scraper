@@ -507,16 +507,19 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
         .pay-rate {{ white-space: nowrap; }}
         .location {{ white-space: nowrap; }}
         details {{ margin: 10px 0; }}
-        summary {{ 
+        summary {{
             cursor: pointer;
-            color: #007bff;
-            padding: 8px;
+            color: #555; /* Changed from #007bff to a subtle gray */
+            padding: 6px; /* Slightly reduced padding */
             background-color: #f8f9fa;
             border: 1px solid #dee2e6;
             border-radius: 4px;
+            font-size: 0.9rem; /* Reduced font size */
+            font-weight: normal; /* Ensure normal weight */
         }}
         summary:hover {{
             background-color: #e9ecef;
+            color: #333; /* Slightly darker on hover for feedback */
         }}
         .job-description {{
             padding: 15px;
