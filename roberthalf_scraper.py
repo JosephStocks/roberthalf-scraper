@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytz
 import requests
 from playwright.sync_api import (
     Error as PlaywrightError,
@@ -488,6 +489,12 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
     num_tx_jobs = len([job for job in jobs_list if job.get('stateprovince') == state_filter])
     num_remote_jobs = len([job for job in jobs_list if job.get('remote', '').lower() == 'yes'])
 
+    # Convert UTC timestamp to CST
+    cst = pytz.timezone('America/Chicago')
+    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    cst_dt = dt.astimezone(cst)
+    formatted_timestamp = cst_dt.strftime('%Y-%m-%d %H:%M:%S %Z')
+
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -536,7 +543,7 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
 </head>
 <body>
     <h1>Robert Half Job Report</h1>
-    <p>Generated: {datetime.fromisoformat(timestamp.replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M:%S %Z')}</p>
+    <p>Generated: {formatted_timestamp}</p>
     <p>Filters: State = {state_filter}, Posted Within = {job_period.replace('_', ' ')}</p>
     <p>Found {num_tx_jobs} jobs in {state_filter} and {num_remote_jobs} remote jobs (Total Unique: {len(jobs_list)}). API reported {total_found} total jobs matching period.</p>
 
@@ -561,8 +568,18 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
         state = job.get('stateprovince', '')
         is_remote = job.get('remote', '').lower() == 'yes'
         job_id = job.get('unique_job_number', 'N/A')
-        posted_date_str = job.get('original_published_date', 'N/A') # Assuming 'original_published_date' field exists
-        job_url = job.get('job_detail_url', '#') # Use the correct key 'job_detail_url'
+        
+        # Format the posted date in CST
+        posted_date_str = 'N/A'
+        if date_posted := job.get('date_posted'):
+            try:
+                posted_dt = datetime.fromisoformat(date_posted.replace('Z', '+00:00'))
+                posted_dt_cst = posted_dt.astimezone(cst)  # cst timezone object is already defined above
+                posted_date_str = posted_dt_cst.strftime('%Y-%m-%d %H:%M %Z')
+            except (ValueError, AttributeError):
+                posted_date_str = date_posted  # Fallback to raw value if parsing fails
+        
+        job_url = job.get('job_detail_url', '#')
 
         location_str = f"{city}, {state}" if not is_remote else "Remote (US)"
 
