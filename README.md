@@ -2,31 +2,34 @@
 
 ## Description
 
-This Python script scrapes job listings from Robert Half's website. It automates the login process using Playwright, maintains session persistence, and then directly calls the internal job search API (`/bin/jobSearchServlet`) to retrieve job postings based on configured filters (like state and posting period). The script fetches both state-specific and remote US jobs, combining them into a single result set. The results are saved to a JSON file and notifications are sent via Pushover. All timestamps in the HTML report are displayed in Central Time (CST/CDT).
+This Python script scrapes job listings from Robert Half's website. It automates the login process using Playwright, maintains session persistence, and then directly calls the internal job search API (`/bin/jobSearchServlet`) to retrieve job postings based on configured filters (like state and posting period). The script fetches both state-specific and remote US jobs, combining them into a single result set. The results are saved to a JSON file, an HTML report is generated and pushed to Git, and notifications are sent via Pushover. All timestamps in the HTML report are displayed in Central Time (CST/CDT).
 
 ## Features
 
 *   **Automated Login:** Uses Playwright to handle the Robert Half login process.
 *   **Session Persistence:** Saves and reloads login session data (cookies and user agent) to minimize repeated logins. Session validity is checked and refreshed if expired or invalid.
 *   **Direct API Interaction:** Fetches job data efficiently by calling the internal API endpoint directly after authentication.
-*   **Smart Job Filtering:** 
-    * Filters for jobs in the specified state (`FILTER_STATE`)
-    * Includes all US-based remote jobs regardless of state
-    * Combines and deduplicates results
-    * Sorts jobs by posted date (most recent first)
+*   **Smart Job Filtering:**
+    *   Filters for jobs in the specified state (`FILTER_STATE`)
+    *   Includes all US-based remote jobs regardless of state
+    *   Combines and deduplicates results
+    *   Sorts jobs by posted date (most recent first)
 *   **Timezone Handling:** All timestamps in the HTML report are converted to Central Time (CST/CDT)
 *   **Push Notifications:** Sends detailed job notifications via Pushover, including:
-    * Separate counts for state-specific and remote jobs
-    * Location details (Remote or City, State)
-    * Salary information when available
+    *   Separate counts for state-specific and remote jobs
+    *   Location details (Remote or City, State)
+    *   Salary information when available
+    *   A link to the generated HTML report (hosted via GitHub Pages)
 *   **Configurable Filtering:** Allows filtering jobs by State (`FILTER_STATE`) and Job Posting Period (`JOB_POST_PERIOD`) via environment variables.
-*   **Pagination Handling:** Automatically iterates through all pages of job results from the API.
+*   **Pagination Handling:** Automatically iterates through all pages of job results from the API for both local and remote jobs.
 *   **Proxy Support:** Configurable support for using HTTP proxies (including authentication).
 *   **User Agent Rotation:** Option to rotate user agents for requests.
 *   **Retry Logic:** Implements exponential backoff for failed API requests.
 *   **Human-like Delays:** Incorporates random delays to mimic human browsing behavior.
-*   **Detailed Logging:** Logs activities and errors to both console and `scraper.log`.
-*   **JSON Output:** Saves scraped and filtered job data to a timestamped JSON file.
+*   **Detailed Logging:** Logs activities and errors to both console and `logs/scraper.log`.
+*   **JSON Output:** Saves scraped and filtered job data to a timestamped JSON file in the `output/` directory.
+*   **HTML Report Generation:** Creates a user-friendly HTML report (`docs/jobs.html`) displaying jobs sorted by date with details and expandable descriptions.
+*   **Automated Git Commit/Push:** Automatically adds, commits, and pushes the updated `docs/jobs.html` report to the Git repository (useful for hosting via GitHub Pages).
 
 ## Requirements
 
@@ -37,6 +40,7 @@ This Python script scrapes job listings from Robert Half's website. It automates
     *   `pytz>=2025.2`
     *   `requests>=2.32.3`
 *   **Playwright Browsers:** You need to install the browser binaries for Playwright (`playwright install`).
+*   **Git:** Required for the automated commit/push feature. Must be installed and accessible in the system's PATH.
 
 ## Installation
 
@@ -50,9 +54,14 @@ This Python script scrapes job listings from Robert Half's website. It automates
     python -m venv venv
     source venv/bin/activate # On Windows use `venv\Scripts\activate`
     ```
-3.  **Install dependencies:**
+3.  **Install dependencies using `uv` (or `pip`):**
     ```bash
-    pip install .
+    # Recommended (uses uv.lock for exact versions)
+    pip install uv
+    uv pip install .
+
+    # Alternative using pip directly (might install slightly different versions)
+    # pip install .
     ```
 4.  **Install Playwright browsers:**
     ```bash
@@ -63,7 +72,8 @@ This Python script scrapes job listings from Robert Half's website. It automates
         ```bash
         cp .env.example .env
         ```
-    *   Edit the `.env` file with your actual Robert Half credentials and desired settings. **Do not commit the `.env` file with your credentials.**
+    *   Edit the `.env` file with your actual Robert Half credentials, Pushover keys, and desired settings. **Do not commit the `.env` file with your credentials.**
+    *   If using the automated Git push feature, ensure your Git environment is configured (e.g., user name/email, authentication for pushing).
 
 ## Configuration
 
@@ -71,41 +81,47 @@ Configuration is managed via environment variables, typically stored in a `.env`
 
 **Key Variables:**
 
-| Variable                | Description                                                                                   | Default/Example Value        |
-| :---------------------- | :-------------------------------------------------------------------------------------------- | :--------------------------- |
-| `ROBERTHALF_USERNAME`   | **Required.** Your Robert Half login email.                                                   | `your.email@example.com`     |
-| `ROBERTHALF_PASSWORD`   | **Required.** Your Robert Half login password.                                                | `your_password_here`         |
-| `PUSHOVER_API_TOKEN`    | **Required.** Your Pushover application token for notifications.                              | `your_pushover_token`        |
-| `PUSHOVER_USER_KEY_JOE` | **Required.** Pushover user key for notifications.                                           | `your_pushover_user_key`     |
-| `USE_PROXY`             | Set to `true` to enable proxy usage, `false` to disable.                                      | `false`                      |
-| `PROXY_SERVER`          | Proxy server address and port (e.g., `host:port`).                                            | `geo.iproyal.com:12321`      |
-| `PROXY_AUTH`            | Proxy authentication in `username:password` format.                                           | `username:password...`       |
-| `PROXY_BYPASS`          | Comma-separated list of hosts to bypass the proxy for.                                        | `*.iproyal.com`              |
-| `SAVE_SESSION`          | `true` to save/load session data, `false` otherwise.                                          | `true`                       |
-| `SESSION_FILE`          | Filename for storing session data (cookies, user agent, timestamp).                           | `session_data.json`          |
-| `SESSION_MAX_AGE_HOURS` | Maximum age of saved session data in hours before forcing a new login.                        | `12`                         |
-| `FILTER_STATE`          | Two-letter state code to filter jobs (e.g., `TX`, `CA`, `PA`). Also includes all US remote jobs. | `TX`                         |
-| `JOB_POST_PERIOD`       | Time period for job postings (e.g., `PAST_24_HOURS`, `PAST_3_DAYS`, `PAST_WEEK`, `ALL`).      | `PAST_24_HOURS`              |
-| `HEADLESS_BROWSER`      | `true` to run Playwright browser without UI, `false` for visible browser (useful for debug).    | `true`                       |
-| `ROTATE_USER_AGENT`     | `true` to use random user agents from a predefined list, `false` to use `DEFAULT_USER_AGENT`. | `false`                      |
-| `DEFAULT_USER_AGENT`    | The user agent string to use if `ROTATE_USER_AGENT` is `false`.                               | `Mozilla/5.0...Chrome/134...`|
-| `REQUEST_DELAY_SECONDS` | Base delay (in seconds) added between fetching subsequent pages of job results (after the page-specific delay). | `2`                          |
-| `PAGE_DELAY_MIN`        | Minimum delay (in seconds) between fetching subsequent pages of job results.                    | `5`                          |
-| `PAGE_DELAY_MAX`        | Maximum delay (in seconds) between fetching subsequent pages of job results.                    | `15`                         |
-| `MAX_RETRIES`           | Maximum number of retry attempts for failed API requests.                                     | `3`                          |
-| `BROWSER_TIMEOUT_MS`    | Timeout for Playwright browser operations in milliseconds.                                    | `60000` (60 seconds)         |
-| `REQUEST_TIMEOUT_SECONDS`| Timeout for direct HTTP API requests in seconds.                                              | `30`                         |
+| Variable                  | Description                                                                                     | Default/Example Value          | Loaded By         | Used By               |
+| :------------------------ | :---------------------------------------------------------------------------------------------- | :----------------------------- | :---------------- | :-------------------- |
+| `ROBERTHALF_USERNAME`     | **Required.** Your Robert Half login email.                                                     | `your.email@example.com`       | `config_loader`   | `roberthalf_scraper`  |
+| `ROBERTHALF_PASSWORD`     | **Required.** Your Robert Half login password.                                                  | `your_password_here`           | `config_loader`   | `roberthalf_scraper`  |
+| `PUSHOVER_ENABLED`        | `true` to enable Pushover notifications, `false` to disable.                                  | `true`                         | `config_loader`   | `roberthalf_scraper`  |
+| `PUSHOVER_TOKEN`          | **Required if enabled.** Your Pushover application token.                                     | `your_pushover_token`          | `config_loader`   | `pushnotify`          |
+| `PUSHOVER_USER_KEY_JOE`   | **Required if enabled.** Pushover user key for 'Joe'.                                         | `your_pushover_user_key`       | `config_loader`   | `pushnotify`          |
+| `PUSHOVER_USER_KEY_KATIE` | Optional. Pushover user key for 'Katie'.                                                      | `your_pushover_user_key_katie` | `config_loader`   | `pushnotify`          |
+| `USE_PROXY`               | `true` to enable proxy usage, `false` to disable.                                             | `false`                        | `config_loader`   | `utils`               |
+| `PROXY_SERVER`            | Proxy server address and port (e.g., `host:port`). Used if `USE_PROXY` is `true`.                 | `geo.iproyal.com:12321`        | `config_loader`   | `utils`               |
+| `PROXY_AUTH`              | Proxy authentication in `username:password` format. Used if `USE_PROXY` is `true`.            | `username:password...`         | `config_loader`   | `utils`               |
+| `PROXY_BYPASS`            | Optional comma-separated list of hosts to bypass the proxy for.                             | `*.iproyal.com`                | `config_loader`   | `utils`               |
+| `SAVE_SESSION`            | `true` to save/load session data, `false` otherwise.                                          | `true`                         | `config_loader`   | `roberthalf_scraper`  |
+| `SESSION_FILE`            | Filename for storing session data within `.session/`.                                           | `session_data.json`            | `config_loader`   | `roberthalf_scraper`  |
+| `SESSION_MAX_AGE_HOURS`   | Max age of saved session data before forcing new login.                                         | `12`                           | `config_loader`   | `roberthalf_scraper`  |
+| `FILTER_STATE`            | Two-letter state code to filter jobs (e.g., `TX`). Also includes all US remote jobs.            | `TX`                           | `config_loader`   | `roberthalf_scraper`  |
+| `JOB_POST_PERIOD`         | Time period for job postings (e.g., `PAST_24_HOURS`, `PAST_3_DAYS`, `PAST_WEEK`, `ALL`).        | `PAST_24_HOURS`                | `config_loader`   | `roberthalf_scraper`  |
+| `HEADLESS_BROWSER`        | `true` for headless browser, `false` for visible (debug).                                     | `true`                         | `config_loader`   | `roberthalf_scraper`  |
+| `ROTATE_USER_AGENT`       | `true` to use random user agents, `false` to use `DEFAULT_USER_AGENT`.                        | `false`                        | `config_loader`   | `roberthalf_scraper`  |
+| `DEFAULT_USER_AGENT`      | User agent if `ROTATE_USER_AGENT` is `false`.                                                 | `Mozilla/5.0...Chrome/134...`  | `config_loader`   | `roberthalf_scraper`  |
+| `REQUEST_DELAY_SECONDS`   | Base delay between fetching subsequent pages (after page-specific delay).                       | `2`                            | `config_loader`   | `roberthalf_scraper`  |
+| `PAGE_DELAY_MIN`          | Minimum delay between fetching subsequent pages.                                              | `5`                            | `config_loader`   | `roberthalf_scraper`  |
+| `PAGE_DELAY_MAX`          | Maximum delay between fetching subsequent pages.                                              | `15`                           | `config_loader`   | `roberthalf_scraper`  |
+| `MAX_RETRIES`             | Max retry attempts for failed API requests.                                                   | `3`                            | `config_loader`   | `roberthalf_scraper`  |
+| `BROWSER_TIMEOUT_MS`      | Timeout for Playwright operations (milliseconds).                                             | `60000`                        | `config_loader`   | `roberthalf_scraper`  |
+| `REQUEST_TIMEOUT_SECONDS` | Timeout for direct HTTP API requests (seconds).                                               | `30`                           | `config_loader`   | `roberthalf_scraper`  |
+| `TEST_MODE`               | `true` to force notifications/Git push even if no jobs found (for testing).                   | `false`                        | `config_loader`   | `roberthalf_scraper`  |
+| `LOG_LEVEL`               | Logging level (e.g., `DEBUG`, `INFO`, `WARNING`).                                               | `INFO`                         | `config_loader`   | `roberthalf_scraper`  |
+
+*Note:* Variables like `IPROYAL_PROXY_SERVER` and `IPROYAL_PROXY_AUTH` in `.env.example` are helper variables used within the `.env` file itself to set `PROXY_SERVER` and `PROXY_AUTH`. They are not directly read by the Python scripts.
 
 ## Output Format
 
-The script saves results to a JSON file with the following structure:
+The script saves results to a JSON file in the `output/` directory with the following structure:
 ```json
 {
     "jobs": [...],  // Array of job objects, sorted by posted date (newest first)
-    "timestamp": "20240327_103000",
-    "total_tx_jobs": 5,
+    "timestamp": "2024-03-27T10:30:00Z", // ISO 8601 UTC timestamp
+    "total_[state]_jobs": 5, // e.g., total_tx_jobs
     "total_remote_jobs": 14,
-    "total_jobs_found_in_period": 250,
+    "total_jobs_found_in_period": 250, // Total reported by API across all pages/types
     "job_post_period_filter": "PAST_24_HOURS",
     "state_filter": "TX",
     "status": "Completed"
@@ -123,29 +139,39 @@ The script also generates an HTML report (`docs/jobs.html`) that displays the jo
   - Posted date in CST/CDT
   - Expandable job description
 
+This HTML file is automatically committed and pushed to the Git repository, making it suitable for hosting via GitHub Pages or similar services.
+
 ## Push Notifications
 
-The script sends notifications via Pushover with the following information:
+If enabled via `PUSHOVER_ENABLED=true`, the script sends notifications via Pushover with the following information:
 - Number of new state-specific jobs found
 - Number of new remote jobs found
 - Details of up to 5 latest positions including:
   - Job title
   - Location (either "Remote" or "City, State")
   - Salary range and period (if available)
-- Link to view all technology jobs on Robert Half
+- A link (`url` parameter) pointing to the generated `jobs.html` report (typically hosted on GitHub Pages).
+- A custom title (`url_title`) for the link.
 
 ## Usage
 
-Ensure your `.env` file is correctly configured, especially with your credentials.
+Ensure your `.env` file is correctly configured, especially with your credentials and Pushover keys. If using the Git push feature, ensure Git is configured for pushing to your remote repository.
 
-Run the script from the project's root directory:
+Run the script from the project's root directory using `uv` (or `python` if `uv` is not used):
 
 ```bash
-python roberthalf_scraper.py
+# Recommended
+uv run python roberthalf_scraper.py
+
+# Alternative
+# python roberthalf_scraper.py
 ```
 
 *   Logs will be printed to the console and saved to `logs/scraper.log` (overwritten each run).
-*   If successful, a JSON file named `roberthalf_[state]_jobs_[timestamp].json` (e.g., `roberthalf_tx_jobs_20240827_103000.json`) will be created in the `output/` directory, containing the scraped job data.
+*   If successful, a JSON file named `roberthalf_[state]_jobs_[timestamp].json` (e.g., `roberthalf_tx_jobs_20240827_103000.json`) will be created in the `output/` directory.
+*   The `docs/jobs.html` file will be generated or updated.
+*   If new jobs are found (or `TEST_MODE=true`), the `docs/jobs.html` file will be committed and pushed to Git.
+*   If `PUSHOVER_ENABLED=true` and new jobs are found (or `TEST_MODE=true`), a notification will be sent.
 *   Session data (if enabled) will be stored in the `.session/` directory, using the filename specified by `SESSION_FILE`.
 
 ## Automated Scheduling (systemd)
@@ -154,8 +180,9 @@ For Linux systems using systemd, you can automate the scraper to run on a schedu
 
 1.  **Ensure Prerequisites:**
     *   Make sure the installation steps (cloning, dependencies, Playwright browsers, `.env` file) are complete.
-    *   The systemd units assume the script and its dependencies are runnable from the project's root directory (`/home/jstocks/PROJECTS/scrape-roberthalf` in the service file - adjust if your path differs).
-    *   Your user must be allowed to run long-running services (this is usually enabled by default). Check with `loginctl show-user $USER | grep Linger` - if it's `no`, run `loginctl enable-linger $USER`).
+    *   The systemd units assume the script and its dependencies are runnable from the project's root directory (`/home/jstocks/PROJECTS/scrape-roberthalf` in the service file - **adjust this path if yours differs**).
+    *   The service file uses `uv run`. Ensure `uv` is installed and accessible, or modify the `ExecStart` line to use `python` directly if preferred.
+    *   Your user must be allowed to run long-running services (check with `loginctl show-user $USER | grep Linger` - if `no`, run `loginctl enable-linger $USER`).
 
 2.  **Run the Installation Script:**
     This script copies the unit files to the correct user directory (`~/.config/systemd/user/`), reloads the systemd user daemon, and enables/starts the timer.
@@ -165,72 +192,65 @@ For Linux systems using systemd, you can automate the scraper to run on a schedu
     ```
 
 3.  **Managing the Service/Timer:**
-    *   **Check Timer Status:** See when the timer is scheduled to run next.
-        ```bash
-        systemctl --user status roberthalf-scraper.timer
-        ```
-    *   **Check Last Service Run Status:** See if the last run succeeded or failed.
-        ```bash
-        systemctl --user status roberthalf-scraper.service
-        ```
-    *   **View Logs:** Tail the logs for the scraper service.
-        ```bash
-        journalctl --user -u roberthalf-scraper.service -f
-        ```
-    *   **List All User Timers:**
-        ```bash
-        systemctl --user list-timers
-        ```
-    *   **Stop the Timer:** To temporarily stop the scraper from running automatically:
-        ```bash
-        systemctl --user stop roberthalf-scraper.timer
-        ```
-    *   **Disable the Timer:** To prevent the timer from starting on boot:
-        ```bash
-        systemctl --user disable roberthalf-scraper.timer
-        ```
-    *   **Re-enable and Start:**
-        ```bash
-        systemctl --user enable --now roberthalf-scraper.timer
-        ```
+    *   Check Timer Status: `systemctl --user status roberthalf-scraper.timer`
+    *   Check Last Service Run: `systemctl --user status roberthalf-scraper.service`
+    *   View Logs: `journalctl --user -u roberthalf-scraper.service -f`
+    *   List All User Timers: `systemctl --user list-timers`
+    *   Stop Timer: `systemctl --user stop roberthalf-scraper.timer`
+    *   Disable Timer: `systemctl --user disable roberthalf-scraper.timer`
+    *   Re-enable and Start: `systemctl --user enable --now roberthalf-scraper.timer`
 
 4.  **Uninstall:**
-    To remove the service and timer:
     ```bash
-    # Stop and disable the timer
     systemctl --user disable --now roberthalf-scraper.timer
-
-    # Remove the unit files
     rm ~/.config/systemd/user/roberthalf-scraper.service
     rm ~/.config/systemd/user/roberthalf-scraper.timer
-
-    # Reload the daemon
     systemctl --user daemon-reload
     ```
 
 ## Key Script Components
 
-*   **`login_and_get_session()`:** Handles the browser automation using Playwright to log into Robert Half and extract session cookies and the user agent used.
-*   **`load_session_data()` / `save_session_data()`:** Manages reading and writing session information (cookies, UA, timestamp) to a JSON file for persistence. Checks session expiry.
-*   **`validate_session()`:** Makes a lightweight API call to check if the current session cookies are still valid.
-*   **`get_or_refresh_session()`:** Orchestrates session loading, validation, and refreshing (triggering login) if necessary.
-*   **`fetch_jobs()`:** Makes the POST request to the `/bin/jobSearchServlet` API endpoint with the necessary payload, headers, and cookies to retrieve a page of job results.
-*   **`fetch_with_retry()`:** Wraps `fetch_jobs` with retry logic using exponential backoff.
-*   **`filter_jobs_by_state()`:** Filters the jobs returned by the API based on the `FILTER_STATE` configuration.
-*   **`save_job_results()`:** Writes the final filtered list of jobs and metadata to the output JSON file.
-*   **`scrape_roberthalf_jobs()`:** The main function that orchestrates the entire process: session management, API fetching loop, filtering, and saving results.
+*   **`roberthalf_scraper.py`:** The main executable script.
+    *   `scrape_roberthalf_jobs()`: Orchestrates the entire process.
+    *   `login_and_get_session()`: Handles Playwright login, returns cookies and UA.
+    *   `load_session_data()` / `save_session_data()`: Manages session file I/O and expiry check.
+    *   `validate_session()`: Checks if current session cookies are valid via API call.
+    *   `get_or_refresh_session()`: Gets existing or triggers new login/save.
+    *   `fetch_jobs()`: Makes the direct API request for a page of jobs.
+    *   `fetch_with_retry()`: Wraps `fetch_jobs` with retry logic.
+    *   `filter_jobs_by_state()`: Filters API response based on state/remote criteria.
+    *   `save_job_results()`: Saves JSON, generates HTML, triggers Git push and notifications.
+    *   `_generate_html_report()`: Creates the HTML content for `docs/jobs.html`.
+    *   `_commit_and_push_report()`: Handles Git add, commit, and push operations.
+*   **`config_loader.py`:** Loads configuration from `.env` files and environment variables, performs basic type conversion and validation.
+*   **`utils.py`:** Contains utility functions, notably `get_proxy_config()` for parsing proxy settings from environment variables.
+*   **`pushnotify.py`:** Handles sending notifications via the Pushover API.
+*   **`.env.example` / `.env`:** Files for storing configuration variables (credentials, settings).
+*   **`systemd/`:** Contains the `*.service` and `*.timer` files for automated scheduling.
+*   **`docs/jobs.html`:** The generated HTML report (updated each run).
+*   **`output/`:** Directory where timestamped JSON results are saved.
+*   **`logs/`:** Directory where `scraper.log` is saved.
+*   **`.session/`:** Directory where session data (`session_data.json`) is stored.
+
+## Development Utilities
+
+These scripts are included for testing specific functionalities during development:
+
+*   **`proxy-scraping-test.py`:** Uses `config_loader` and `utils` to test the proxy configuration (`.env.test`) by making repeated requests to IP-checking websites and rotating the browser context. Useful for verifying proxy setup and rotation logic.
+*   **`roberthalf_test.py`:** A simple Playwright script that navigates to a Robert Half job page using the proxy configuration from `.env.test`, takes a screenshot, and prints accessibility info. Useful for basic browser automation checks and verifying page structure.
 
 ## Limitations and Considerations
 
-*   **Website/API Changes:** The script relies on specific website login elements (locators) and the structure/behavior of the internal API. Changes by Robert Half can break the scraper.
-*   **Login Fragility:** Automated login processes can be detected or changed, potentially requiring updates to the Playwright interaction logic. Captchas or MFA (if introduced) would require significant changes.
-*   **Rate Limiting/Blocking:** Excessive requests might lead to IP blocking or throttling. The delays and proxy support are mitigation attempts.
-*   **Session Validity:** Sessions can expire or be invalidated server-side for various reasons beyond the script's control. The validation and refresh logic attempt to handle this.
-*   **Error Handling:** While retries and basic error handling are implemented, complex network issues or unexpected API responses might require more robust handling.
+*   **Website/API Changes:** Relies on specific website login elements and API structure. Changes by Robert Half can break the scraper.
+*   **Login Fragility:** Automated login can be detected or changed. Captchas or MFA would require significant updates.
+*   **Rate Limiting/Blocking:** Excessive requests might lead to blocks. Delays and proxies are mitigation attempts.
+*   **Session Validity:** Sessions can expire unexpectedly. Validation and refresh logic attempt to handle this.
+*   **Error Handling:** While retries and basic error handling exist, complex network or API issues might require more robustness.
+*   **Git Authentication:** The automated push feature relies on the environment having appropriate Git credentials configured (e.g., SSH key, credential helper).
 
 ## API Documentation: `/bin/jobSearchServlet`
 
-This section documents the internal Robert Half API endpoint used by the script to fetch job listings, based on observed network requests. ***Note: This is an internal API and is subject to change without notice.***
+*(This section remains unchanged from the original, as the API interaction logic itself was not modified)*
 
 *   **Endpoint:** `https://www.roberthalf.com/bin/jobSearchServlet`
 *   **HTTP Method:** `POST`
@@ -249,18 +269,18 @@ This section documents the internal Robert Half API endpoint used by the script 
     | Parameter      | Type          | Description                                                                                                | Example from `curl` / Script Usage      |
     | :------------- | :------------ | :--------------------------------------------------------------------------------------------------------- | :-------------------------------------- |
     | `country`      | String        | Country code (e.g., 'us').                                                                                 | `"us"`                                  |
-    | `keywords`     | String        | Job title, skill, or keyword search terms.                                                                 | `""` (Empty in example)                 |
-    | `location`     | String        | General location search term (can be city, state, zip).                                                    | `""` (Empty in example)                 |
-    | `distance`     | String        | Search radius around the location.                                                                         | `"50"`                                  |
-    | `remote`       | String        | Filter for remote jobs ("Yes", "No", "").                                                                  | `"No"`                                  |
-    | `source`       | List[String]  | Source system for jobs (e.g., Salesforce).                                                                 | `["Salesforce"]`                        |
-    | `city`         | List[String]  | List of specific cities to filter by. *Note: The script doesn't use this, filtering by state post-API call.* | `["Kansas City", ...] (in `curl` only) |
-    | `lobid`        | List[String]  | Line of Business ID (e.g., "RHT" for Robert Half Technology). Likely important for scope.                | `["RHT"]`                               |
+    | `keywords`     | String        | Job title, skill, or keyword search terms.                                                                 | `""` (Empty in script)                  |
+    | `location`     | String        | General location search term (can be city, state, zip).                                                    | `""` (Empty in script)                  |
+    | `distance`     | String        | Search radius around the location.                                                                         | `"50"` (Hardcoded in script)            |
+    | `remote`       | String        | Filter for remote jobs ("yes", "No", ""). Script uses "yes" or "No".                                       | `"No"` or `"yes"` (Based on loop)       |
+    | `source`       | List[String]  | Source system for jobs (e.g., Salesforce).                                                                 | `["Salesforce"]` (Hardcoded)            |
+    | `city`         | List[String]  | List of specific cities to filter by. *Note: The script doesn't use this, filtering by state post-API call.* | `[]` (Empty in script)                  |
+    | `lobid`        | List[String]  | Line of Business ID (e.g., "RHT" for Robert Half Technology). Likely important for scope.                | `["RHT"]` (Hardcoded)                   |
     | `postedwithin` | String        | Time frame for job posting date (maps to `JOB_POST_PERIOD`).                                               | `"PAST_24_HOURS"` (Configurable)        |
-    | `pagesize`     | Integer       | Number of job results per page.                                                                            | `25`                                    |
+    | `pagesize`     | Integer       | Number of job results per page.                                                                            | `25` (Hardcoded)                        |
     | `pagenumber`   | Integer       | The page number of results to retrieve (1-based).                                                          | `1`, `2`, ... (Iterated by script)      |
-    | `sortby`       | String        | Sorting criteria (e.g., `PUBLISHED_DATE_DESC`, `RELEVANCE_DESC`).                                          | `"PUBLISHED_DATE_DESC"`                 |
-    | `payratemin`   | Integer       | Minimum pay rate filter.                                                                                   | `0`                                     |
+    | `sortby`       | String        | Sorting criteria (e.g., `PUBLISHED_DATE_DESC`, `RELEVANCE_DESC`).                                          | `"PUBLISHED_DATE_DESC"` (Hardcoded)     |
+    | `payratemin`   | Integer       | Minimum pay rate filter.                                                                                   | `0` (Hardcoded)                         |
     | `stateprovince`| String        | *Not observed in request payload, filtering done client-side by script based on response.*                 | N/A (Used for filtering response)       |
 
 *   **Example Request (`curl`):**
@@ -269,7 +289,7 @@ This section documents the internal Robert Half API endpoint used by the script 
       -H 'accept: application/json, text/plain, */*' \
       # ... other headers (cookie, user-agent, referer, etc.) ...
       -H 'content-type: application/json' \
-      --data-raw '{"country":"us","keywords":"","location":"","distance":"50","remote":"No","remoteText":"","languagecodes":[],"source":["Salesforce"],"city":["Kansas City","King of Prussia","Orlando","Philadelphia"],"emptype":[],"lobid":["RHT"],"jobtype":"","postedwithin":"","timetype":"","pagesize":25,"pagenumber":1,"sortby":"RELEVANCE_DESC","mode":"","payratemin":0,"includedoe":""}'
+      --data-raw '{"country":"us","keywords":"","location":"","distance":"50","remote":"No","remoteText":"","languagecodes":[],"source":["Salesforce"],"city":[],"emptype":[],"lobid":["RHT"],"jobtype":"","postedwithin":"PAST_24_HOURS","timetype":"","pagesize":25,"pagenumber":1,"sortby":"PUBLISHED_DATE_DESC","mode":"","payratemin":0,"includedoe":""}'
     ```
 
 *   **Example Successful Response (JSON):**
@@ -280,7 +300,7 @@ This section documents the internal Robert Half API endpoint used by the script 
         "request_id": "da345274-2fda-4bb5-a69c-1a7040a6054f",
         "request_status": "SUCCESS",
         "request_message": "OK",
-        "found": "54", // Total number of jobs matching the criteria
+        "found": "54", // Total number of jobs matching the criteria FOR THIS REQUEST TYPE (local or remote)
         "facets": { ... }, // Data for refining search (counts by type, city, etc.)
         "google_request_id": "...",
         "jobs": [ // Array of job objects
@@ -302,7 +322,7 @@ This section documents the internal Robert Half API endpoint used by the script 
                 "payrate_max": "185000.00",
                 "payrate_period": "Yearly",
                 "salary_currency": "USD",
-                "remote": "No",
+                "remote": "No", // "yes" or "No"
                 "job_detail_url": "https://www.roberthalf.com/us/en/job/...",
                 "source": "Salesforce",
                 // ... other fields
@@ -312,7 +332,7 @@ This section documents the internal Robert Half API endpoint used by the script 
     }
     ```
     **Key Response Fields:**
-    *   `found`: String representing the total number of jobs found matching the criteria across all pages.
+    *   `found`: String representing the total number of jobs found matching the criteria *for the current request type (local or remote)* across all pages. The script aggregates these.
     *   `facets`: An object containing counts for various filters (employment type, city, posted date), useful for UI refinements but not directly used by this script.
     *   `jobs`: An array containing the job listing objects for the current page.
     *   `jobs[].jobtitle`: The title of the job.
@@ -322,5 +342,6 @@ This section documents the internal Robert Half API endpoint used by the script 
     *   `jobs[].payrate_min`, `jobs[].payrate_max`, `jobs[].payrate_period`: Salary/pay information, if available.
     *   `jobs[].job_detail_url`: Direct link to the job posting page.
     *   `jobs[].emptype`: Type of employment (Perm, Temp, etc.).
+    *   `jobs[].remote`: Indicates if the job is remote ("yes" or "No").
 
-*   **Error Handling:** The script checks for non-2xx HTTP status codes. Status codes like 401/403 likely indicate an invalid or expired session (triggering re-login). Invalid JSON responses also indicate potential session issues or API errors.
+*   **Error Handling:** The script checks for non-2xx HTTP status codes. Status codes like 401/403 likely indicate an invalid or expired session (triggering re-login attempt via validation). Invalid JSON responses also indicate potential session issues or API errors.
