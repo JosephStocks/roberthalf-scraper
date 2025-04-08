@@ -2,7 +2,7 @@
 
 ## Description
 
-This Python script scrapes job listings from Robert Half's website. It automates the login process using Playwright, maintains session persistence, and then directly calls the internal job search API (`/bin/jobSearchServlet`) to retrieve job postings based on configured filters (like state and posting period). The script fetches both state-specific and remote US jobs, combining them into a single result set. The results are saved to a JSON file and notifications are sent via Pushover.
+This Python script scrapes job listings from Robert Half's website. It automates the login process using Playwright, maintains session persistence, and then directly calls the internal job search API (`/bin/jobSearchServlet`) to retrieve job postings based on configured filters (like state and posting period). The script fetches both state-specific and remote US jobs, combining them into a single result set. The results are saved to a JSON file and notifications are sent via Pushover. All timestamps in the HTML report are displayed in Central Time (CST/CDT).
 
 ## Features
 
@@ -13,6 +13,8 @@ This Python script scrapes job listings from Robert Half's website. It automates
     * Filters for jobs in the specified state (`FILTER_STATE`)
     * Includes all US-based remote jobs regardless of state
     * Combines and deduplicates results
+    * Sorts jobs by posted date (most recent first)
+*   **Timezone Handling:** All timestamps in the HTML report are converted to Central Time (CST/CDT)
 *   **Push Notifications:** Sends detailed job notifications via Pushover, including:
     * Separate counts for state-specific and remote jobs
     * Location details (Remote or City, State)
@@ -32,6 +34,7 @@ This Python script scrapes job listings from Robert Half's website. It automates
 *   **Dependencies:** Listed in `pyproject.toml`:
     *   `playwright>=1.51.0`
     *   `python-dotenv>=1.1.0`
+    *   `pytz>=2025.2`
     *   `requests>=2.32.3`
 *   **Playwright Browsers:** You need to install the browser binaries for Playwright (`playwright install`).
 
@@ -98,7 +101,7 @@ Configuration is managed via environment variables, typically stored in a `.env`
 The script saves results to a JSON file with the following structure:
 ```json
 {
-    "jobs": [...],
+    "jobs": [...],  // Array of job objects, sorted by posted date (newest first)
     "timestamp": "20240327_103000",
     "total_tx_jobs": 5,
     "total_remote_jobs": 14,
@@ -108,6 +111,17 @@ The script saves results to a JSON file with the following structure:
     "status": "Completed"
 }
 ```
+
+The script also generates an HTML report (`docs/jobs.html`) that displays the jobs in a user-friendly format with the following features:
+- Jobs are sorted by posted date (newest first)
+- All timestamps are displayed in Central Time (CST/CDT)
+- Each job entry includes:
+  - Job title with link to the full posting
+  - Location (city/state or Remote)
+  - Pay rate (if available)
+  - Job ID
+  - Posted date in CST/CDT
+  - Expandable job description
 
 ## Push Notifications
 
