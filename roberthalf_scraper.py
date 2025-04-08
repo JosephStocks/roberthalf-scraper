@@ -1,13 +1,13 @@
+import contextlib
 import json
 import logging
-import os
 import random
 import subprocess
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse # Added for URL parsing
+from urllib.parse import urlparse  # Added for URL parsing
 
 import pytz
 import requests
@@ -78,6 +78,7 @@ REQUEST_TIMEOUT_SECONDS = config.get('REQUEST_TIMEOUT_SECONDS', 30)
 TEST_MODE = config.get('TEST_MODE', False)
 # --- GitHub Token ---
 GITHUB_ACCESS_TOKEN = config.get('GITHUB_ACCESS_TOKEN', None) # Get token from config
+GITHUB_PAGES_URL = config.get('GITHUB_PAGES_URL', None) # Get report URL from config
 
 
 # --- Helper Functions ---
@@ -621,7 +622,7 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
         state = job.get('stateprovince', '')
         is_remote = job.get('remote', '').lower() == 'yes'
         job_id = job.get('unique_job_number', 'N/A')
-        
+
         # Format the posted date in CST
         posted_date_str = 'N/A'
         if date_posted := job.get('date_posted'):
@@ -631,7 +632,7 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
                 posted_date_str = posted_dt_cst.strftime('%Y-%m-%d %H:%M %Z')
             except (ValueError, AttributeError):
                 posted_date_str = date_posted  # Fallback to raw value if parsing fails
-        
+
         job_url = job.get('job_detail_url', '#')
 
         location_str = f"{city}, {state}" if not is_remote else "Remote (US)"
@@ -778,7 +779,8 @@ def _commit_and_push_report(html_file_path: Path, timestamp: str, config: dict[s
                         # Construct authenticated URL
                         host = parsed_url.hostname
                         path = parsed_url.path
-                        if path.startswith('/'): path = path[1:] # Remove leading slash if present
+                        if path.startswith('/'):
+                            path = path[1:] # Remove leading slash if present
                         authenticated_url = f"https://{git_token}@{host}/{path}"
                         logger.info(f"Using token authentication to push to {parsed_url.scheme}://[hidden]@{host}/{path}")
 
@@ -820,6 +822,7 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
     job_period = config.get('JOB_POST_PERIOD', 'N/A') # Get from config
     test_mode = config.get('TEST_MODE', False) # Get from config
     pushover_enabled = config.get('PUSHOVER_ENABLED', False) # Get from config
+    github_pages_url = config.get('GITHUB_PAGES_URL') # Get from config
 
     # Count TX and remote jobs
     tx_jobs = [job for job in jobs_list if job.get('stateprovince') == state_filter]
@@ -894,11 +897,8 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
             location = "Remote" if is_remote else f"{city}, {state}"
             detail = f"• {title} ({location})"
             if pay_min_str and pay_max_str and pay_period:
-                 try:
-                     # Use single backslash for newline
-                     detail += f"\n  ${int(float(pay_min_str)):,} - ${int(float(pay_max_str)):,}/{pay_period}"
-                 except (ValueError, TypeError):
-                      pass # Ignore if pay can't be formatted nicely for notification
+                with contextlib.suppress(ValueError, TypeError): # Ignore if pay can't be formatted nicely for notification
+                    detail += f"\n  ${int(float(pay_min_str)):,} - ${int(float(pay_max_str)):,}/{pay_period}"
             job_details.append(detail)
 
         # Use single backslash for newline join
@@ -927,25 +927,29 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
             message += "\n\nClick the link below to view the full list." # Updated call to action
 
         try:
-            # Make this dynamic or configurable if possible, but hardcoding is okay for now
-            github_pages_url = "https://JosephStocks.github.io/roberthalf-scraper/jobs.html"
-            if "YOUR_USERNAME" in github_pages_url or "YOUR_REPO_NAME" in github_pages_url:
-                 logger.warning("Pushover URL still contains placeholders! Please update 'github_pages_url' in save_job_results.")
-                 # Optionally, don't send notification or use a fallback URL if placeholders are detected
+            # Validate the GitHub Pages URL from config
+            pushover_url = None
+            pushover_url_title = None
+            if not github_pages_url:
+                logger.warning("GITHUB_PAGES_URL not set in config. Pushover notification will not have a specific report URL.")
+            elif "YOUR_USERNAME" in github_pages_url or "YOUR_REPO_NAME" in github_pages_url:
+                logger.warning("GITHUB_PAGES_URL seems to contain placeholders. Pushover notification URL might be incorrect.")
+                pushover_url = github_pages_url # Send potentially incorrect URL but warn
+                pushover_url_title = f"View Full {state_filter}/Remote Job List"
+            else:
+                # URL looks okay
+                pushover_url = github_pages_url
+                pushover_url_title = f"View Full {state_filter}/Remote Job List"
 
-            # Get Pushover keys from config (pushnotify.py still uses os.getenv, which is fine)
-            # pushover_token = config.get('PUSHOVER_TOKEN')
-            # pushover_user = config.get('PUSHOVER_USER_KEY_JOE') # Assuming Joe for now
-
-            # Send notification (pushnotify.py reads env vars directly)
+            # Send notification (pushnotify.py reads env vars directly for tokens/keys)
             send_pushover_notification(
                 message=message,
                 user="Joe", # Consider making user configurable via .env if needed
                 title=f"Robert Half {state_filter} & Remote Jobs",
-                url=github_pages_url,
-                url_title=f"View Full {state_filter}/Remote Job List"
+                url=pushover_url, # Use validated/logged URL
+                url_title=pushover_url_title # Use associated title
             )
-            logger.info("Push notification sent successfully pointing to HTML report.")
+            logger.info("Push notification sent successfully.")
         except Exception as notify_err:
             logger.error(f"Failed to send push notification: {notify_err}")
     elif not pushover_enabled:

@@ -135,6 +135,10 @@ def load_config_values() -> dict[str, Any]:
     config['ROBERTHALF_USERNAME'] = get_env_value('ROBERTHALF_USERNAME') # Keep None if not set
     config['ROBERTHALF_PASSWORD'] = get_env_value('ROBERTHALF_PASSWORD') # Keep None if not set
 
+    # === Git & Report URL Configuration ===
+    config['GITHUB_ACCESS_TOKEN'] = get_env_value('GITHUB_ACCESS_TOKEN') # Keep None if not set
+    config['GITHUB_PAGES_URL'] = get_env_value('GITHUB_PAGES_URL') # Keep None if not set (Report URL)
+
     # --- Add any other configuration variables used in the project here ---
 
     logger.info("Configuration loading complete.")
@@ -159,3 +163,4 @@ def load_config_values() -> dict[str, Any]:
 #     # Example of accessing a value
 #     print(f"\nTest Mode (Test): {test_cfg.get('TEST_MODE')}")
 #     print(f"Session Max Age (Test): {test_cfg.get('SESSION_MAX_AGE_HOURS')}")
+#     print(f"GitHub Pages URL (Test): {test_cfg.get('GITHUB_PAGES_URL')}") # Example check

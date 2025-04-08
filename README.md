@@ -19,7 +19,7 @@ This Python script scrapes job listings from Robert Half's website. It automates
     *   Separate counts for state-specific and remote jobs
     *   Location details (Remote or City, State)
     *   Salary information when available
-    *   A link to the generated HTML report (hosted via GitHub Pages)
+    *   A link to the generated HTML report hosted on a publicly accessible URL (configured via `GITHUB_PAGES_URL`).
 *   **Configurable Filtering:** Allows filtering jobs by State (`FILTER_STATE`) and Job Posting Period (`JOB_POST_PERIOD`) via environment variables.
 *   **Pagination Handling:** Automatically iterates through all pages of job results from the API for both local and remote jobs.
 *   **Proxy Support:** Configurable support for using HTTP proxies (including authentication).
@@ -71,7 +71,7 @@ This Python script scrapes job listings from Robert Half's website. It automates
         ```bash
         cp .env.example .env
         ```
-    *   Edit the `.env` file with your actual Robert Half credentials, Pushover keys, optional `GITHUB_ACCESS_TOKEN`, and desired settings. **Do not commit the `.env` file with your credentials.**
+    *   Edit the `.env` file with your actual Robert Half credentials, Pushover keys, optional `GITHUB_ACCESS_TOKEN`, the `GITHUB_PAGES_URL` pointing to your hosted report, and desired settings. **Do not commit the `.env` file with your credentials.**
     *   Ensure your Git environment meets the authentication requirements mentioned above if using the push feature.
 
 ## Configuration
@@ -109,6 +109,7 @@ Configuration is managed via environment variables, typically stored in a `.env`
 | `TEST_MODE`               | `true` to force notifications/Git push even if no jobs found (for testing).                   | `false`                        | `config_loader`   | `roberthalf_scraper`  |
 | `LOG_LEVEL`               | Logging level (e.g., `DEBUG`, `INFO`, `WARNING`).                                               | `INFO`                         | `config_loader`   | `roberthalf_scraper`  |
 | `GITHUB_ACCESS_TOKEN`     | **Optional.** GitHub Personal Access Token (Classic or Fine-Grained) for Git push authentication via HTTPS. If not provided, push relies on ambient auth (SSH keys, credential helper). | `your_github_access_token` | `config_loader`   | `roberthalf_scraper` |
+| `GITHUB_PAGES_URL`        | **Required if PUSHOVER_ENABLED=true.** The public URL where the generated `docs/jobs.html` report will be hosted (e.g., your GitHub Pages site). Used in Pushover notifications. | `https://YOUR_USERNAME.github.io/YOUR_REPO_NAME/jobs.html` | `config_loader` | `roberthalf_scraper` |
 
 *Note:* Variables like `IPROYAL_PROXY_SERVER` and `IPROYAL_PROXY_AUTH` in `.env.example` are helper variables used within the `.env` file itself to set `PROXY_SERVER` and `PROXY_AUTH`. They are not directly read by the Python scripts.
 
@@ -150,12 +151,12 @@ If enabled via `PUSHOVER_ENABLED=true`, the script sends notifications via Pusho
   - Job title
   - Location (either "Remote" or "City, State")
   - Salary range and period (if available)
-- A link (`url` parameter) pointing to the generated `jobs.html` report (typically hosted on GitHub Pages).
+- A link (`url` parameter) pointing to the hosted `jobs.html` report (the URL is specified by the `GITHUB_PAGES_URL` environment variable).
 - A custom title (`url_title`) for the link.
 
 ## Usage
 
-Ensure your `.env` file is correctly configured, especially with your credentials and Pushover keys. If using the Git push feature, ensure Git is configured for pushing to your remote repository.
+Ensure your `.env` file is correctly configured, especially with your credentials, Pushover keys, and the `GITHUB_PAGES_URL`. If using the Git push feature, ensure Git is configured for pushing to your remote repository.
 
 Run the script from the project's root directory using `uv` (or `python` if `uv` is not used):
 
@@ -171,7 +172,7 @@ uv run python roberthalf_scraper.py
 *   If successful, a JSON file named `roberthalf_[state]_jobs_[timestamp].json` (e.g., `roberthalf_tx_jobs_20240827_103000.json`) will be created in the `output/` directory.
 *   The `docs/jobs.html` file will be generated or updated.
 *   If new jobs are found (or `TEST_MODE=true`), the `docs/jobs.html` file will be committed and pushed to Git.
-*   If `PUSHOVER_ENABLED=true` and new jobs are found (or `TEST_MODE=true`), a notification will be sent.
+*   If `PUSHOVER_ENABLED=true` and new jobs are found (or `TEST_MODE=true`), a notification will be sent (provided `GITHUB_PAGES_URL` is also set correctly).
 *   Session data (if enabled) will be stored in the `.session/` directory, using the filename specified by `SESSION_FILE`.
 
 ## Automated Scheduling (systemd)
@@ -179,7 +180,7 @@ uv run python roberthalf_scraper.py
 For Linux systems using systemd, you can automate the scraper to run on a schedule using the provided user service and timer units. This runs the scraper every 2 hours between 7 AM and 9 PM.
 
 1.  **Ensure Prerequisites:**
-    *   Make sure the installation steps (cloning, dependencies, Playwright browsers, `.env` file) are complete.
+    *   Make sure the installation steps (cloning, dependencies, Playwright browsers, `.env` file with all required variables including `GITHUB_PAGES_URL`) are complete.
     *   The systemd units assume the script and its dependencies are runnable from the project's root directory (`/home/jstocks/PROJECTS/scrape-roberthalf` in the service file - **adjust this path if yours differs**).
     *   The service file uses `uv run`. Ensure `uv` is installed and accessible, or modify the `ExecStart` line to use `python` directly if preferred.
     *   Your user must be allowed to run long-running services (check with `loginctl show-user $USER | grep Linger` - if `no`, run `loginctl enable-linger $USER`).
@@ -247,6 +248,7 @@ These scripts are included for testing specific functionalities during developme
 *   **Session Validity:** Sessions can expire unexpectedly. Validation and refresh logic attempt to handle this.
 *   **Error Handling:** While retries and basic error handling exist, complex network or API issues might require more robustness.
 *   **Git Authentication:** The automated push feature requires proper authentication. If using an HTTPS remote, providing a `GITHUB_ACCESS_TOKEN` is recommended. If using SSH remotes or preferring not to use a token, the environment must have existing Git credentials configured (e.g., SSH key agent, credential helper). The script will attempt the push using the token method first if available and the remote is HTTPS; otherwise, it falls back to a standard `git push`.
+*   **Pushover URL:** Ensure the `GITHUB_PAGES_URL` variable in your `.env` file points to the correct public URL where the `jobs.html` report is hosted.
 
 ## API Documentation: `/bin/jobSearchServlet`
 
