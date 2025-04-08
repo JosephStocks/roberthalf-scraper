@@ -29,18 +29,17 @@ This Python script scrapes job listings from Robert Half's website. It automates
 *   **Detailed Logging:** Logs activities and errors to both console and `logs/scraper.log`.
 *   **JSON Output:** Saves scraped and filtered job data to a timestamped JSON file in the `output/` directory.
 *   **HTML Report Generation:** Creates a user-friendly HTML report (`docs/jobs.html`) displaying jobs sorted by date with details and expandable descriptions.
-*   **Automated Git Commit/Push:** Automatically adds, commits, and pushes the updated `docs/jobs.html` report to the Git repository (useful for hosting via GitHub Pages).
+*   **Automated Git Commit/Push:** Automatically adds, commits, and pushes the updated `docs/jobs.html` report to the Git repository. Supports authentication via `GITHUB_ACCESS_TOKEN` for HTTPS remotes, falling back to ambient authentication (SSH keys, credential helper) otherwise.
 
 ## Requirements
 
 *   **Python:** >=3.13 (as specified in `pyproject.toml`)
-*   **Dependencies:** Listed in `pyproject.toml`:
-    *   `playwright>=1.51.0`
-    *   `python-dotenv>=1.1.0`
-    *   `pytz>=2025.2`
-    *   `requests>=2.32.3`
-*   **Playwright Browsers:** You need to install the browser binaries for Playwright (`playwright install`).
+*   **Dependencies:** Listed in `pyproject.toml` (install via `uv pip install .` or `pip install .`)
+*   **Playwright Browsers:** (`playwright install`)
 *   **Git:** Required for the automated commit/push feature. Must be installed and accessible in the system's PATH.
+*   **Git Authentication:** For the automated push feature to work, *either*:
+    *   Provide a `GITHUB_ACCESS_TOKEN` in the `.env` file for repositories using HTTPS remotes.
+    *   *Or* ensure the environment where the script runs has pre-configured Git authentication (e.g., SSH keys authorized with GitHub, a Git credential helper configured).
 
 ## Installation
 
@@ -72,8 +71,8 @@ This Python script scrapes job listings from Robert Half's website. It automates
         ```bash
         cp .env.example .env
         ```
-    *   Edit the `.env` file with your actual Robert Half credentials, Pushover keys, and desired settings. **Do not commit the `.env` file with your credentials.**
-    *   If using the automated Git push feature, ensure your Git environment is configured (e.g., user name/email, authentication for pushing).
+    *   Edit the `.env` file with your actual Robert Half credentials, Pushover keys, optional `GITHUB_ACCESS_TOKEN`, and desired settings. **Do not commit the `.env` file with your credentials.**
+    *   Ensure your Git environment meets the authentication requirements mentioned above if using the push feature.
 
 ## Configuration
 
@@ -109,6 +108,7 @@ Configuration is managed via environment variables, typically stored in a `.env`
 | `REQUEST_TIMEOUT_SECONDS` | Timeout for direct HTTP API requests (seconds).                                               | `30`                           | `config_loader`   | `roberthalf_scraper`  |
 | `TEST_MODE`               | `true` to force notifications/Git push even if no jobs found (for testing).                   | `false`                        | `config_loader`   | `roberthalf_scraper`  |
 | `LOG_LEVEL`               | Logging level (e.g., `DEBUG`, `INFO`, `WARNING`).                                               | `INFO`                         | `config_loader`   | `roberthalf_scraper`  |
+| `GITHUB_ACCESS_TOKEN`     | **Optional.** GitHub Personal Access Token (Classic or Fine-Grained) for Git push authentication via HTTPS. If not provided, push relies on ambient auth (SSH keys, credential helper). | `your_github_access_token` | `config_loader`   | `roberthalf_scraper` |
 
 *Note:* Variables like `IPROYAL_PROXY_SERVER` and `IPROYAL_PROXY_AUTH` in `.env.example` are helper variables used within the `.env` file itself to set `PROXY_SERVER` and `PROXY_AUTH`. They are not directly read by the Python scripts.
 
@@ -246,7 +246,7 @@ These scripts are included for testing specific functionalities during developme
 *   **Rate Limiting/Blocking:** Excessive requests might lead to blocks. Delays and proxies are mitigation attempts.
 *   **Session Validity:** Sessions can expire unexpectedly. Validation and refresh logic attempt to handle this.
 *   **Error Handling:** While retries and basic error handling exist, complex network or API issues might require more robustness.
-*   **Git Authentication:** The automated push feature relies on the environment having appropriate Git credentials configured (e.g., SSH key, credential helper).
+*   **Git Authentication:** The automated push feature requires proper authentication. If using an HTTPS remote, providing a `GITHUB_ACCESS_TOKEN` is recommended. If using SSH remotes or preferring not to use a token, the environment must have existing Git credentials configured (e.g., SSH key agent, credential helper). The script will attempt the push using the token method first if available and the remote is HTTPS; otherwise, it falls back to a standard `git push`.
 
 ## API Documentation: `/bin/jobSearchServlet`
 

@@ -118,15 +118,18 @@ def load_config_values() -> dict[str, Any]:
     config['MAX_RETRIES'] = _get_typed_env_value('MAX_RETRIES', 3, int)
 
     # === Proxy Configuration (Load as strings, parsing/validation happens in utils.py) ===
-    config['PROXY_ENABLED'] = _get_typed_env_value('PROXY_ENABLED', False, bool)
-    config['PROXY_URL'] = get_env_value('PROXY_URL') # Keep None if not set
-    config['PROXY_USERNAME'] = get_env_value('PROXY_USERNAME') # Keep None if not set
-    config['PROXY_PASSWORD'] = get_env_value('PROXY_PASSWORD') # Keep None if not set
+    # Directly load the variables used by utils.get_proxy_config
+    config['USE_PROXY'] = _get_typed_env_value('USE_PROXY', False, bool)
+    config['PROXY_SERVER'] = get_env_value('PROXY_SERVER') # Keep None if not set
+    config['PROXY_AUTH'] = get_env_value('PROXY_AUTH') # Keep None if not set
+    config['PROXY_BYPASS'] = get_env_value('PROXY_BYPASS') # Keep None if not set
 
     # === Pushover Notifications ===
     config['PUSHOVER_ENABLED'] = _get_typed_env_value('PUSHOVER_ENABLED', True, bool)
     config['PUSHOVER_TOKEN'] = get_env_value('PUSHOVER_TOKEN') # Keep None if not set
-    config['PUSHOVER_USER'] = get_env_value('PUSHOVER_USER') # Keep None if not set
+    # Load specific user keys directly (pushnotify.py retrieves them via os.getenv)
+    config['PUSHOVER_USER_KEY_JOE'] = get_env_value('PUSHOVER_USER_KEY_JOE') # Keep None if not set
+    config['PUSHOVER_USER_KEY_KATIE'] = get_env_value('PUSHOVER_USER_KEY_KATIE') # Keep None if not set
 
     # === RobertHalf Credentials (Load as strings, check existence in login function) ===
     config['ROBERTHALF_USERNAME'] = get_env_value('ROBERTHALF_USERNAME') # Keep None if not set
