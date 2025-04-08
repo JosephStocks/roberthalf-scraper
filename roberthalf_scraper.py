@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse # Added for URL parsing
 
 import pytz
 import requests
@@ -53,6 +54,7 @@ def setup_logging():
 logger = setup_logging()
 
 # Load config *after* logger is ready
+# Ensure load_prod_config is called to get the config dictionary
 config = load_prod_config()
 
 # Update SESSION_FILE default to be inside SESSION_DIR
@@ -74,6 +76,9 @@ MAX_RETRIES = config.get('MAX_RETRIES', 3)
 BROWSER_TIMEOUT_MS = config.get('BROWSER_TIMEOUT_MS', 60000)
 REQUEST_TIMEOUT_SECONDS = config.get('REQUEST_TIMEOUT_SECONDS', 30)
 TEST_MODE = config.get('TEST_MODE', False)
+# --- GitHub Token ---
+GITHUB_ACCESS_TOKEN = config.get('GITHUB_ACCESS_TOKEN', None) # Get token from config
+
 
 # --- Helper Functions ---
 
@@ -149,7 +154,7 @@ def load_session_data(filename_path: Path = SESSION_FILE_PATH) -> tuple[list[dic
             return None
 
         # Check session age
-        saved_timestamp = datetime.fromisoformat(saved_timestamp_str)
+        saved_timestamp = datetime.fromisoformat(saved_timestamp_str.replace('Z', '+00:00')) # Ensure timezone aware
         if datetime.now(UTC) - saved_timestamp > timedelta(hours=SESSION_MAX_AGE_HOURS):
             logger.info(f"Session data in {filename_path.resolve()} has expired (older than {SESSION_MAX_AGE_HOURS} hours). Refreshing.")
             filename_path.unlink() # Delete expired session file
@@ -175,20 +180,23 @@ def login_and_get_session() -> tuple[list[dict[str, Any]] | None, str]:
     session_user_agent = get_user_agent()
     logger.info(f"Using User Agent for login: {session_user_agent}")
 
+    # Use the global config dictionary loaded earlier
+    global config
+
     with sync_playwright() as p:
-        proxy_config = get_proxy_config()
+        proxy_config_dict = get_proxy_config() # Still uses utils for parsing env vars
         browser = None
         context = None
         try:
             logger.debug(f"Launching browser (Headless: {HEADLESS_BROWSER})")
             browser = p.chromium.launch(
-                proxy=proxy_config,
+                proxy=proxy_config_dict, # Pass the parsed dict here
                 headless=HEADLESS_BROWSER,
                 timeout=BROWSER_TIMEOUT_MS
             )
 
             context = browser.new_context(
-                proxy=proxy_config,
+                proxy=proxy_config_dict, # Pass the parsed dict here
                 viewport={'width': 1920, 'height': 1080},
                 user_agent=session_user_agent,
                 # Attempt to bypass bot detection
@@ -209,11 +217,11 @@ def login_and_get_session() -> tuple[list[dict[str, Any]] | None, str]:
             page.goto(login_url, wait_until="domcontentloaded", timeout=BROWSER_TIMEOUT_MS)
             add_human_delay(2, 4)
 
-            # Get credentials securely
-            username = os.getenv('ROBERTHALF_USERNAME')
-            password = os.getenv('ROBERTHALF_PASSWORD')
+            # Get credentials securely from loaded config
+            username = config.get('ROBERTHALF_USERNAME')
+            password = config.get('ROBERTHALF_PASSWORD')
             if not username or not password:
-                logger.error("ROBERTHALF_USERNAME or ROBERTHALF_PASSWORD not set in environment.")
+                logger.error("ROBERTHALF_USERNAME or ROBERTHALF_PASSWORD not found in loaded configuration.")
                 raise ValueError("Missing login credentials in environment variables.")
 
             # --- Login Steps ---
@@ -238,17 +246,20 @@ def login_and_get_session() -> tuple[list[dict[str, Any]] | None, str]:
             sign_in_button.click()
 
             # Wait for navigation/login confirmation
-            # Option 1: Wait for a specific element that appears after login
-            # Option 2: Wait for URL change (if applicable)
-            # Option 3: Wait for network idle (less reliable if background requests continue)
             logger.info("Waiting for post-login state (networkidle)...")
             try:
                 # Check if login failed (e.g., error message appears)
                 error_locator = page.locator('div[role="alert"]:visible, .login-error:visible') # Example selectors
                 error_visible = error_locator.is_visible(timeout=5000) # Quick check
                 if error_visible:
-                     error_text = error_locator.first.text_content()
-                     logger.error(f"Login failed. Detected error message: {error_text}")
+                     error_text = error_locator.first.text_content(timeout=2000) or "[Could not get error text]"
+                     logger.error(f"Login failed. Detected error message: {error_text.strip()}")
+                     # Capture screenshot on login error
+                     try:
+                        page.screenshot(path="playwright_login_error.png")
+                        logger.info("Login error screenshot saved to playwright_login_error.png")
+                     except Exception as ss_err:
+                        logger.error(f"Failed to capture login error screenshot: {ss_err}")
                      return None, session_user_agent # Login failed
 
                 page.wait_for_load_state("networkidle", timeout=BROWSER_TIMEOUT_MS)
@@ -256,6 +267,13 @@ def login_and_get_session() -> tuple[list[dict[str, Any]] | None, str]:
 
             except PlaywrightTimeoutError:
                 logger.warning("Timeout waiting for network idle after login, proceeding cautiously.")
+                # Maybe add a check here for a known post-login element?
+                # Example: dashboard_element = page.locator('#dashboard-widget')
+                # if not dashboard_element.is_visible(timeout=5000):
+                #     logger.error("Network idle timed out AND dashboard element not found. Assuming login failed.")
+                #     return None, session_user_agent
+                # else:
+                #     logger.info("Network idle timed out, but dashboard element found. Proceeding.")
             except Exception as wait_err:
                  logger.warning(f"Error during post-login wait: {wait_err}")
 
@@ -271,19 +289,21 @@ def login_and_get_session() -> tuple[list[dict[str, Any]] | None, str]:
 
         except PlaywrightTimeoutError as te:
             logger.error(f"Timeout error during Playwright operation: {te}")
-            # Capture screenshot on error if possible
             if 'page' in locals() and page:
                 try:
-                    page.screenshot(path="playwright_error_screenshot.png")
-                    logger.info("Screenshot saved to playwright_error_screenshot.png")
+                    page.screenshot(path="playwright_timeout_error.png")
+                    logger.info("Timeout screenshot saved to playwright_timeout_error.png")
                 except Exception as ss_err:
-                    logger.error(f"Failed to capture screenshot: {ss_err}")
+                    logger.error(f"Failed to capture timeout screenshot: {ss_err}")
             return None, session_user_agent
         except PlaywrightError as pe:
              logger.error(f"Playwright specific error during login: {pe}")
              return None, session_user_agent
+        except ValueError as ve: # Catch missing credentials error
+            logger.error(f"Configuration error during login: {ve}")
+            raise # Re-raise config errors as they are critical
         except Exception as e:
-            logger.error(f"Unexpected error during login process: {e}")
+            logger.error(f"Unexpected error during login process: {e}", exc_info=True)
             return None, session_user_agent
         finally:
             if context:
@@ -423,7 +443,7 @@ def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number:
         "keywords": "",
         "location": "",
         "distance": "50",
-        "remote": "yes" if is_remote else "No",
+        "remote": "yes" if is_remote else "No", # API expects "yes" or "No"
         "remoteText": "",
         "languagecodes": [],
         "source": ["Salesforce"],
@@ -443,7 +463,34 @@ def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number:
 
     try:
         logger.info(f"Fetching {'remote' if is_remote else 'local'} jobs page {page_number} using session UA: {user_agent}")
-        response = requests.post(url, headers=headers, cookies=cookie_dict, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
+        # Use utils.get_proxy_config() to get proxy dict for requests if enabled
+        proxy_config_dict = get_proxy_config()
+        proxies = None
+        if proxy_config_dict:
+             # Format for requests library
+             # Assumes http proxy, adjust if socks is needed
+             server_url = proxy_config_dict['server']
+             if proxy_config_dict.get('username') and proxy_config_dict.get('password'):
+                 # Basic Auth format for requests
+                 auth = f"{proxy_config_dict['username']}:{proxy_config_dict['password']}"
+                 # Need to parse the server url to inject auth properly
+                 parsed_url = urlparse(server_url)
+                 proxy_url_with_auth = f"{parsed_url.scheme}://{auth}@{parsed_url.netloc}"
+                 proxies = {"http": proxy_url_with_auth, "https": proxy_url_with_auth}
+                 logger.debug(f"Using proxy for requests: {parsed_url.scheme}://****:****@{parsed_url.netloc}")
+             else:
+                 # Proxy without authentication
+                 proxies = {"http": server_url, "https": server_url}
+                 logger.debug(f"Using proxy for requests (no auth): {server_url}")
+
+        response = requests.post(
+            url,
+            headers=headers,
+            cookies=cookie_dict,
+            json=payload,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            proxies=proxies # Pass proxies dict to requests
+            )
         response.raise_for_status()
 
         # Try to parse response as JSON
@@ -455,16 +502,22 @@ def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number:
             return None
 
     except requests.exceptions.HTTPError as http_err:
-        if response.status_code in (401, 403, 500):
-            logger.warning("Session appears to be invalid or expired")
+        status_code = http_err.response.status_code
+        if status_code in (401, 403):
+            logger.warning(f"HTTP {status_code} error suggests session is invalid or expired.")
+        elif status_code == 500:
+             logger.warning(f"HTTP 500 Server Error fetching jobs page {page_number}. Body: {http_err.response.text[:200]}...")
         else:
             logger.error(f"HTTP error fetching jobs page {page_number}: {http_err}")
+        return None
+    except requests.exceptions.ProxyError as proxy_err:
+        logger.error(f"Proxy error fetching jobs page {page_number}: {proxy_err}")
         return None
     except requests.exceptions.RequestException as req_err:
         logger.error(f"Network error fetching jobs page {page_number}: {req_err}")
         return None
     except Exception as e:
-        logger.error(f"Unexpected error fetching jobs page {page_number}: {e}")
+        logger.error(f"Unexpected error fetching jobs page {page_number}: {e}", exc_info=True)
         return None
 
 def fetch_with_retry(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int, is_remote: bool = False) -> dict[str, Any] | None:
@@ -623,85 +676,138 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
 """
     return html_content
 
-def _run_git_command(command: list[str], cwd: Path) -> bool:
-    """Runs a Git command using subprocess and logs output/errors."""
+def _run_git_command(command: list[str], cwd: Path, sensitive: bool = False) -> tuple[bool, str, str]:
+    """
+    Runs a Git command using subprocess, logs carefully, and returns success, stdout, stderr.
+    :param command: List of command arguments.
+    :param cwd: Working directory.
+    :param sensitive: If True, prevents command args from being logged (for commands with tokens).
+    :return: Tuple (success_boolean, stdout_string, stderr_string)
+    """
+    cmd_display = " ".join(command) if not sensitive else f"{command[0]} {command[1]} [args hidden]"
     try:
-        logger.info(f"Running command: {' '.join(command)} in {cwd}")
-        result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True, encoding='utf-8')
-        logger.info(f"Git command stdout:\n{result.stdout}")
-        if result.stderr:
-             logger.warning(f"Git command stderr:\n{result.stderr}")
-        return True
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Git command failed: {' '.join(command)}")
-        logger.error(f"Return code: {e.returncode}")
-        logger.error(f"Stdout:\n{e.stdout}")
-        logger.error(f"Stderr:\n{e.stderr}")
-        return False
-    except FileNotFoundError:
-        logger.error("Git command failed: 'git' executable not found. Ensure Git is installed and in PATH.")
-        return False
-    except Exception as e:
-        logger.error(f"An unexpected error occurred running git command: {e}")
-        return False
+        logger.info(f"Running command: {cmd_display} in {cwd}")
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False, # Don't automatically raise on non-zero exit, check manually
+            encoding='utf-8',
+            errors='replace' # Handle potential encoding errors in output
+        )
+        stdout = result.stdout.strip() if result.stdout else ""
+        stderr = result.stderr.strip() if result.stderr else ""
 
-def _commit_and_push_report(html_file_path: Path, timestamp: str) -> None:
-    """Adds, commits, and pushes the HTML report using Git."""
-    repo_dir = Path.cwd() # Assume script runs from repo root
-    commit_message = f"Update job report for {FILTER_STATE} - {timestamp}"
-
-    # html_file_path IS ALREADY the relative path (e.g., Path("docs/jobs.html"))
-    # We just need its string representation for subprocess
-    html_rel_path_str = str(html_file_path)
-
-    # Check if there are changes to commit first
-    status_command = ["git", "status", "--porcelain", html_rel_path_str]
-    try:
-        # Make sure the path exists before checking status
-        absolute_html_path = repo_dir / html_file_path
-        if not absolute_html_path.exists():
-            logger.error(f"HTML file {absolute_html_path} does not exist. Skipping Git operations.")
-            return
-
-        result = subprocess.run(status_command, cwd=repo_dir, capture_output=True, text=True, check=True, encoding='utf-8')
-        if not result.stdout.strip():
-            logger.info(f"No changes detected in {html_rel_path_str}. Skipping commit and push.")
-            return
+        if result.returncode == 0:
+            logger.info(f"Git command successful. stdout:\n{stdout}" if stdout else "Git command successful.")
+            if stderr:
+                 logger.warning(f"Git command stderr:\n{stderr}")
+            return True, stdout, stderr
         else:
-             logger.info(f"Changes detected in {html_rel_path_str}:\n{result.stdout.strip()}")
-    except FileNotFoundError:
-         # This might happen if the file was unexpectedly deleted between creation and here
-         logger.error(f"HTML file {absolute_html_path} not found when checking git status.")
-         return
-    except subprocess.CalledProcessError as e:
-         # Handle case where git status fails (e.g., not a git repo, file not tracked initially?)
-         logger.warning(f"Git status check failed (maybe file isn't tracked yet?): {e}. Proceeding with add/commit attempt.")
-    except Exception as e:
-        logger.warning(f"Could not check git status reliably: {e}. Proceeding with add/commit/push attempt.")
+            # Log sensitive command details carefully on error
+            logger.error(f"Git command failed: {cmd_display}")
+            logger.error(f"Return code: {result.returncode}")
+            logger.error(f"Stdout:\n{stdout}")
+            logger.error(f"Stderr:\n{stderr}")
+            return False, stdout, stderr
 
+    except FileNotFoundError:
+        logger.error(f"Git command failed: '{command[0]}' executable not found. Ensure Git is installed and in PATH.")
+        return False, "", "Git executable not found"
+    except Exception as e:
+        logger.error(f"An unexpected error occurred running git command {cmd_display}: {e}", exc_info=True)
+        return False, "", f"Unexpected error: {e}"
+
+def _commit_and_push_report(html_file_path: Path, timestamp: str, config: dict[str, Any]) -> None:
+    """Adds, commits, and pushes the HTML report using Git, potentially with token auth."""
+    repo_dir = Path.cwd() # Assume script runs from repo root
+    commit_message = f"Update job report for {config.get('FILTER_STATE', 'N/A')} - {timestamp}"
+    html_rel_path_str = str(html_file_path) # Get relative path for commands
+
+    # Check if file exists before proceeding
+    absolute_html_path = repo_dir / html_file_path
+    if not absolute_html_path.exists():
+        logger.error(f"HTML file {absolute_html_path} does not exist. Skipping Git operations.")
+        return
+
+    # Check Git status
+    status_command = ["git", "status", "--porcelain", html_rel_path_str]
+    status_ok, stdout, _ = _run_git_command(status_command, cwd=repo_dir)
+    if status_ok and not stdout:
+        logger.info(f"No changes detected in {html_rel_path_str}. Skipping commit and push.")
+        return
+    elif not status_ok:
+        logger.warning(f"Could not reliably check git status for {html_rel_path_str}. Proceeding with add/commit/push attempt.")
+    else:
+        logger.info(f"Changes detected in {html_rel_path_str}. Proceeding with Git operations.")
 
     # 1. Add the file
-    if not _run_git_command(["git", "add", html_rel_path_str], cwd=repo_dir):
+    add_ok, _, _ = _run_git_command(["git", "add", html_rel_path_str], cwd=repo_dir)
+    if not add_ok:
         logger.error(f"Failed to git add {html_rel_path_str}. Aborting push.")
         return
 
     # 2. Commit the changes
-    if not _run_git_command(["git", "commit", "-m", commit_message], cwd=repo_dir):
+    commit_ok, _, _ = _run_git_command(["git", "commit", "-m", commit_message], cwd=repo_dir)
+    if not commit_ok:
         logger.error("Failed to git commit. Aborting push.")
         # Attempt to reset head if commit failed but add succeeded
         _run_git_command(["git", "reset", "HEAD", html_rel_path_str], cwd=repo_dir)
         return
 
     # 3. Push the changes
-    if not _run_git_command(["git", "push"], cwd=repo_dir):
-        logger.error("Failed to git push.")
-        # Note: Consider more complex error handling like git reset --hard HEAD~1 if push fails?
-        # For now, just log the error. The commit is local.
+    logger.info("Attempting to push changes...")
+    git_token = config.get('GITHUB_ACCESS_TOKEN')
+    push_command = ["git", "push"]
+    sensitive_push = False
+
+    # Try to use token if provided
+    if git_token:
+        logger.debug("GitHub token found, attempting to construct authenticated push URL.")
+        # Get remote push URL
+        remote_url_ok, remote_url, remote_err = _run_git_command(["git", "remote", "get-url", "--push", "origin"], cwd=repo_dir)
+
+        if remote_url_ok and remote_url:
+            try:
+                parsed_url = urlparse(remote_url)
+                if parsed_url.scheme == 'https' and parsed_url.hostname:
+                    # Get current branch name
+                    branch_ok, current_branch, branch_err = _run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir)
+                    if branch_ok and current_branch:
+                        # Construct authenticated URL
+                        host = parsed_url.hostname
+                        path = parsed_url.path
+                        if path.startswith('/'): path = path[1:] # Remove leading slash if present
+                        authenticated_url = f"https://{git_token}@{host}/{path}"
+                        logger.info(f"Using token authentication to push to {parsed_url.scheme}://[hidden]@{host}/{path}")
+
+                        # Update push command
+                        push_command = ["git", "push", authenticated_url, current_branch]
+                        sensitive_push = True # Mark command as sensitive to hide token in logs
+                    else:
+                        logger.warning(f"Could not determine current branch: {branch_err}. Falling back to default push.")
+                else:
+                    logger.warning(f"Remote 'origin' URL is not HTTPS ({remote_url}). Token cannot be used. Falling back to default push (e.g., SSH key).")
+            except Exception as e:
+                 logger.warning(f"Error parsing remote URL or constructing authenticated URL: {e}. Falling back to default push.")
+        else:
+             logger.warning(f"Could not get remote push URL for 'origin': {remote_err}. Falling back to default push.")
+    else:
+        logger.info("No GitHub token provided. Using default Git push command (relies on ambient auth like SSH keys or credential helper).")
+
+    # Execute the push command (either default or with authenticated URL)
+    push_ok, _, push_err = _run_git_command(push_command, cwd=repo_dir, sensitive=sensitive_push)
+
+    if not push_ok:
+        logger.error(f"Failed to git push. Error: {push_err}")
+        # Note: Consider resetting the commit if push fails?
+        # For now, just log the error. The commit remains local.
     else:
         logger.info("Successfully pushed updated job report.")
 
 
-def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, filename_prefix: str = "roberthalf") -> None:
+def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: dict[str, Any], filename_prefix: str = "roberthalf") -> None:
     """Save the final list of jobs to JSON and generate/commit/push an HTML report."""
     # Define paths using constants
     output_dir = OUTPUT_DIR
@@ -710,9 +816,13 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, filename
     timestamp_str = timestamp_dt.strftime("%Y%m%d_%H%M%S")
     iso_timestamp_str = timestamp_dt.isoformat().replace('+00:00', 'Z') # For HTML report
 
+    state_filter = config.get('FILTER_STATE', 'N/A') # Get from config
+    job_period = config.get('JOB_POST_PERIOD', 'N/A') # Get from config
+    test_mode = config.get('TEST_MODE', False) # Get from config
+    pushover_enabled = config.get('PUSHOVER_ENABLED', False) # Get from config
 
     # Count TX and remote jobs
-    tx_jobs = [job for job in jobs_list if job.get('stateprovince') == FILTER_STATE]
+    tx_jobs = [job for job in jobs_list if job.get('stateprovince') == state_filter]
     remote_jobs = [job for job in jobs_list if job.get('remote', '').lower() == 'yes']
 
     # Ensure output and docs directories exist
@@ -722,71 +832,71 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, filename
             logger.debug(f"Ensured directory exists: {dir_path.resolve()}")
         except OSError as e:
             logger.error(f"Failed to create directory {dir_path}: {e}")
-            # Optionally decide whether to proceed for critical dirs like docs
+            return # Stop if directories can't be created
 
-    # --- Save JSON Results (Existing Logic) ---
-    json_filename = f"{filename_prefix}_{FILTER_STATE.lower()}_jobs_{timestamp_str}.json"
+    # --- Save JSON Results ---
+    json_filename = f"{filename_prefix}_{state_filter.lower()}_jobs_{timestamp_str}.json"
     json_output_file_path = output_dir / json_filename
 
     results_data = {
         "jobs": jobs_list,
         "timestamp": iso_timestamp_str, # Use ISO format timestamp
-        f"total_{FILTER_STATE.lower()}_jobs": len(tx_jobs),
+        f"total_{state_filter.lower()}_jobs": len(tx_jobs),
         "total_remote_jobs": len(remote_jobs),
         "total_jobs_found_in_period": total_found,
-        "job_post_period_filter": JOB_POST_PERIOD,
-        "state_filter": FILTER_STATE,
+        "job_post_period_filter": job_period,
+        "state_filter": state_filter,
         "status": "Completed"
     }
 
     try:
         with open(json_output_file_path, 'w', encoding='utf-8') as f:
             json.dump(results_data, f, indent=2, ensure_ascii=False)
-        logger.info(f"Saved {len(jobs_list)} jobs ({len(tx_jobs)} in {FILTER_STATE}, {len(remote_jobs)} remote) to {json_output_file_path.resolve()}")
+        logger.info(f"Saved {len(jobs_list)} jobs ({len(tx_jobs)} in {state_filter}, {len(remote_jobs)} remote) to {json_output_file_path.resolve()}")
     except Exception as e:
         logger.error(f"Failed to save JSON job results to {json_output_file_path.resolve()}: {e}")
 
     # --- Generate and Save HTML Report ---
-    html_filename = "jobs.html"
-    html_output_file_path = docs_dir / html_filename
+    html_filename = "jobs.html" # Fixed filename for GitHub pages
+    html_output_file_path = docs_dir / html_filename # Ensure it's relative for Git commands
 
     try:
-        html_content = _generate_html_report(jobs_list, iso_timestamp_str, total_found, FILTER_STATE, JOB_POST_PERIOD)
+        html_content = _generate_html_report(jobs_list, iso_timestamp_str, total_found, state_filter, job_period)
         with open(html_output_file_path, 'w', encoding='utf-8') as f:
             f.write(html_content)
         logger.info(f"Generated HTML report at: {html_output_file_path.resolve()}")
 
         # --- Commit and Push HTML Report ---
-        if len(jobs_list) > 0 or TEST_MODE: # Only commit/push if new jobs found or testing
-             _commit_and_push_report(html_output_file_path, timestamp_str)
+        # Pass the config dictionary here
+        if len(jobs_list) > 0 or test_mode: # Only commit/push if new jobs found or testing
+             _commit_and_push_report(html_output_file_path, timestamp_str, config) # Pass config
         else:
              logger.info("No new jobs found and not in test mode. Skipping Git commit/push.")
 
     except Exception as e:
-        logger.error(f"Failed to generate or save HTML report to {html_output_file_path.resolve()}: {e}")
+        logger.error(f"Failed to generate, save, or commit/push HTML report to {html_output_file_path.resolve()}: {e}", exc_info=True)
 
     # --- Send Notification ---
-    if len(jobs_list) > 0 or TEST_MODE:
-        # Format job details for notification (same as before)
+    if pushover_enabled and (len(jobs_list) > 0 or test_mode):
+        # Format job details for notification
         job_details = []
         # Sort for notification consistency (same key as HTML)
-        jobs_list.sort(key=lambda x: (x.get('date_posted', '1970-01-01'), x.get('jobtitle', '')), reverse=True)
+        jobs_list.sort(key=lambda x: (x.get('date_posted', '1970-01-01T00:00:00Z'), x.get('jobtitle', '')), reverse=True) # Ensure valid default date
         for job in jobs_list[:5]:
-            # ... (rest of job detail formatting logic remains unchanged) ...
             title = job.get('jobtitle', 'Unknown Title')
             city = job.get('city', 'Unknown City')
             state = job.get('stateprovince', '')
             is_remote = job.get('remote', '').lower() == 'yes'
-            pay_min = job.get('payrate_min')
-            pay_max = job.get('payrate_max')
+            pay_min_str = job.get('payrate_min')
+            pay_max_str = job.get('payrate_max')
             pay_period = job.get('payrate_period', '').lower()
 
             location = "Remote" if is_remote else f"{city}, {state}"
             detail = f"• {title} ({location})"
-            if pay_min and pay_max and pay_period:
+            if pay_min_str and pay_max_str and pay_period:
                  try:
                      # Use single backslash for newline
-                     detail += f"\n  ${int(float(pay_min)):,} - ${int(float(pay_max)):,}/{pay_period}"
+                     detail += f"\n  ${int(float(pay_min_str)):,} - ${int(float(pay_max_str)):,}/{pay_period}"
                  except (ValueError, TypeError):
                       pass # Ignore if pay can't be formatted nicely for notification
             job_details.append(detail)
@@ -795,52 +905,63 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, filename
         details_text = '\n'.join(job_details)
         remaining = len(jobs_list) - 5 if len(jobs_list) > 5 else 0
 
-        # Construct notification message (same as before, but adjust URL prompt)
-        if TEST_MODE and len(jobs_list) == 0:
+        # Construct notification message
+        if test_mode and len(jobs_list) == 0:
              message = (
-                 # Use single backslash for newlines in test message
                     f"🧪 TEST MODE: Simulating job notification!\n\n"
-                    f"Found 3 test jobs in {FILTER_STATE}:\n"
+                    f"Found 3 test jobs in {state_filter}:\n"
                     f"• Test Software Engineer (Austin)\n  $120,000 - $150,000/yearly\n"
                     f"• Test Developer (Dallas)\n  $130,000 - $160,000/yearly\n"
                     f"• Test DevOps Engineer (Houston)\n  $140,000 - $170,000/yearly"
                     f"\n\nClick link to view simulated HTML report." # Adjusted test message
              )
         else:
-            message = f"Found {len(tx_jobs)} new {FILTER_STATE} jobs and {len(remote_jobs)} remote jobs in the {JOB_POST_PERIOD.lower().replace('_', ' ')}!"
+            message = f"Found {len(tx_jobs)} new {state_filter} jobs and {len(remote_jobs)} remote jobs in the {job_period.lower().replace('_', ' ')}!"
             if job_details:
                 # Use single backslash for newlines
                 message += f"\n\nLatest positions:\n{details_text}"
             if remaining > 0:
                 # Use single backslash for newlines
                 message += f"\n\n...and {remaining} more jobs"
-            # Update the call to action
             # Use single backslash for newlines
             message += "\n\nClick the link below to view the full list." # Updated call to action
 
         try:
+            # Make this dynamic or configurable if possible, but hardcoding is okay for now
             github_pages_url = "https://JosephStocks.github.io/roberthalf-scraper/jobs.html"
-            # Check if placeholder is still set and warn if so
             if "YOUR_USERNAME" in github_pages_url or "YOUR_REPO_NAME" in github_pages_url:
                  logger.warning("Pushover URL still contains placeholders! Please update 'github_pages_url' in save_job_results.")
                  # Optionally, don't send notification or use a fallback URL if placeholders are detected
-                 # return
 
+            # Get Pushover keys from config (pushnotify.py still uses os.getenv, which is fine)
+            # pushover_token = config.get('PUSHOVER_TOKEN')
+            # pushover_user = config.get('PUSHOVER_USER_KEY_JOE') # Assuming Joe for now
+
+            # Send notification (pushnotify.py reads env vars directly)
             send_pushover_notification(
                 message=message,
-                user="Joe", # Consider making user configurable if needed
-                title=f"Robert Half {FILTER_STATE} & Remote Jobs", # Slightly updated title
-                url=github_pages_url, # Use the GitHub Pages URL
-                url_title=f"View Full {FILTER_STATE}/Remote Job List" # Updated URL title
+                user="Joe", # Consider making user configurable via .env if needed
+                title=f"Robert Half {state_filter} & Remote Jobs",
+                url=github_pages_url,
+                url_title=f"View Full {state_filter}/Remote Job List"
             )
             logger.info("Push notification sent successfully pointing to HTML report.")
         except Exception as notify_err:
             logger.error(f"Failed to send push notification: {notify_err}")
+    elif not pushover_enabled:
+         logger.info("Pushover notifications are disabled via PUSHOVER_ENABLED=false.")
+
 
 def scrape_roberthalf_jobs() -> None:
     """Main function to orchestrate the Robert Half job scraping."""
     logger.info("--- Starting Robert Half Job Scraper ---")
     start_time = time.time()
+
+    # Access the globally loaded config dictionary
+    global config
+    if not config:
+         logger.critical("Configuration was not loaded successfully. Exiting.")
+         return
 
     try:
         # Get or refresh session (cookies + user_agent)
@@ -855,21 +976,28 @@ def scrape_roberthalf_jobs() -> None:
             jobs_found_this_type = None # Track count for this type (local/remote)
 
             while True:
-                logger.info(f"--- Processing {'Remote' if is_remote else 'Local'} Page {page_number} ---")
+                job_type_str = 'Remote' if is_remote else 'Local'
+                logger.info(f"--- Processing {job_type_str} Page {page_number} ---")
 
                 # Fetch data for the current page with retries
                 response_data = fetch_with_retry(session_cookies, session_user_agent, page_number, is_remote)
 
                 if not response_data:
-                    # Check if the session might be invalid
-                    logger.warning(f"Fetch failed for {'remote' if is_remote else 'local'} page {page_number}. Trying to validate session.")
+                    logger.warning(f"Fetch failed for {job_type_str} page {page_number}. Validating session.")
                     is_valid = validate_session(session_cookies, session_user_agent)
                     if not is_valid:
-                        logger.error("Session became invalid during pagination. Stopping.")
-                        break
+                        logger.error("Session became invalid during pagination. Stopping scrape.")
+                        # Optionally try to refresh session again here?
+                        # For now, just stop.
+                        # session_cookies, session_user_agent = get_or_refresh_session() # Example refresh attempt
+                        # if not session_cookies: raise RuntimeError("Failed to re-validate session.")
+                        # continue # Retry the fetch with the new session? Might cause loops. Careful.
+                        raise RuntimeError("Session became invalid and could not be refreshed during pagination.")
                     else:
-                        logger.error(f"Session still seems valid, but failed to fetch page {page_number} after retries. Stopping.")
-                        break
+                        logger.error(f"Session appears valid, but failed to fetch {job_type_str} page {page_number} after retries. Stopping.")
+                        # Decide: stop all, or just stop this type (local/remote)? Stop all for now.
+                        raise RuntimeError(f"Failed to fetch {job_type_str} page {page_number} despite valid session.")
+
 
                 # Extract total count *for this type* only once
                 if jobs_found_this_type is None:
@@ -877,53 +1005,76 @@ def scrape_roberthalf_jobs() -> None:
                         current_found = int(response_data.get('found', 0))
                         jobs_found_this_type = current_found # Store count for this type
                         total_jobs_api_reported += current_found # Add to overall total
-                        logger.info(f"API reports {current_found} total {'remote' if is_remote else 'local'} jobs found for period '{JOB_POST_PERIOD}'")
+                        logger.info(f"API reports {current_found} total {job_type_str} jobs found for period '{JOB_POST_PERIOD}'")
                     except (ValueError, TypeError):
                         logger.warning("Could not parse 'found' count from API response.")
                         jobs_found_this_type = -1 # Indicate parsing failed
 
                 jobs_on_page = response_data.get('jobs', [])
                 if not jobs_on_page:
-                    logger.info(f"No more {'remote' if is_remote else 'local'} jobs found on page {page_number}. Reached the end.")
+                    logger.info(f"No more {job_type_str} jobs found on page {page_number}. Reached the end for this type.")
                     break
 
-                logger.info(f"Received {len(jobs_on_page)} {'remote' if is_remote else 'local'} jobs on page {page_number}.")
+                logger.info(f"Received {len(jobs_on_page)} {job_type_str} jobs on page {page_number}.")
 
                 # Filter jobs by state (or remote)
+                # filter_jobs_by_state logic now correctly includes TX state OR US remote
                 state_jobs_on_page = filter_jobs_by_state(jobs_on_page, FILTER_STATE)
                 all_filtered_jobs.extend(state_jobs_on_page)
 
-                # Check if this was the last page
-                if len(jobs_on_page) < 25: # Assuming 25 is still the page size
-                    logger.info(f"Received less than assumed page size ({len(jobs_on_page)} < 25). Assuming last page for {'remote' if is_remote else 'local'} jobs.")
+                # Check if this was the last page based on API reporting fewer than page size
+                # Assuming page size is 25 as hardcoded in fetch_jobs
+                if len(jobs_on_page) < 25:
+                    logger.info(f"Received less than page size ({len(jobs_on_page)} < 25). Assuming last page for {job_type_str} jobs.")
                     break
+
+                # Check if we've fetched more pages than reasonably expected based on 'found' count
+                # Example: If API reported 60 jobs, and page size is 25, don't fetch page 4.
+                if jobs_found_this_type is not None and jobs_found_this_type >= 0:
+                     max_pages_expected = (jobs_found_this_type + 24) // 25 # Ceiling division
+                     if page_number >= max_pages_expected:
+                         logger.info(f"Reached expected maximum page number ({page_number}/{max_pages_expected}) based on API 'found' count. Stopping {job_type_str} pagination.")
+                         break
 
                 page_number += 1
                 # Add delays between requests
                 page_delay = random.uniform(PAGE_DELAY_MIN, PAGE_DELAY_MAX)
-                logger.info(f"Waiting {page_delay:.2f} seconds before fetching page {page_number}")
+                logger.info(f"Waiting {page_delay:.2f} seconds before fetching {job_type_str} page {page_number}")
                 time.sleep(page_delay)
-                time.sleep(REQUEST_DELAY_SECONDS)
+                # Additional base delay? Maybe combine them or just use the page delay.
+                # time.sleep(REQUEST_DELAY_SECONDS)
 
             # Add delay between remote and local job fetching
-            if not is_remote: # Check using 'not is_remote' for clarity (same logic as 'is_remote is False')
+            if not is_remote:
                 switch_delay = random.uniform(PAGE_DELAY_MIN * 1.5, PAGE_DELAY_MAX * 1.5) # Slightly adjusted delay
                 logger.info(f"Finished local jobs. Switching to remote jobs. Waiting {switch_delay:.2f} seconds...")
                 time.sleep(switch_delay)
 
         # Remove duplicates after fetching both types
-        unique_jobs_dict = {job.get('unique_job_number'): job for job in all_filtered_jobs if job.get('unique_job_number')}
+        unique_jobs_dict = {}
+        duplicates_found = 0
+        for job in all_filtered_jobs:
+            job_id = job.get('unique_job_number')
+            if job_id:
+                if job_id not in unique_jobs_dict:
+                    unique_jobs_dict[job_id] = job
+                else:
+                    duplicates_found += 1
+            else:
+                 # Handle jobs without a unique ID? Maybe log them.
+                 logger.warning(f"Job found without a 'unique_job_number': {job.get('jobtitle', 'N/A')}")
+
         unique_job_list = list(unique_jobs_dict.values())
-        if len(all_filtered_jobs) > len(unique_job_list):
-             logger.info(f"Removed {len(all_filtered_jobs) - len(unique_job_list)} duplicate jobs. Final count: {len(unique_job_list)}")
+        if duplicates_found > 0:
+             logger.info(f"Removed {duplicates_found} duplicate job entries. Final unique count: {len(unique_job_list)}")
         else:
              logger.info(f"Found {len(unique_job_list)} unique jobs (no duplicates detected).")
 
-        # Save final results, passing the total reported by the API
-        save_job_results(unique_job_list, total_jobs_api_reported) # Pass the correct total count
+        # Save final results, passing the total reported by the API and the config
+        save_job_results(unique_job_list, total_jobs_api_reported, config) # Pass config here
 
     except RuntimeError as rt_err:
-        logger.critical(f"Runtime error, likely session failure: {rt_err}")
+        logger.critical(f"Runtime error, likely session or fetch failure: {rt_err}")
     except ValueError as val_err:
         logger.critical(f"Configuration error: {val_err}")
     except Exception as e:
