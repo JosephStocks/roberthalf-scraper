@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Robert Half Job Report (TX) - 2025-04-09T02:01:37.266860Z</title>
+    <title>Robert Half Job Report (TX) - 2025-04-09T04:33:09.077850Z</title>
     <style>
         body { font-family: sans-serif; margin: 20px; }
         h1 { color: #333; }
         p { color: #555; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; } /* Added vertical-align */
         th { background-color: #f2f2f2; }
         tr:nth-child(even) { background-color: #f9f9f9; }
         a { color: #007bff; text-decoration: none; }
@@ -40,15 +40,36 @@
         }
         .description-row td {
             padding: 0 8px;
-            background-color: #fff;
+            background-color: #fff; /* Ensure description background is white */
+            border: none; /* Remove border for description cell */
+            border-bottom: 1px solid #ddd; /* Keep bottom border for row separation */
+        }
+        .description-row.new-job td { /* Style description row if job is new */
+             background-color: #f0fff0; /* Light green */
+        }
+
+        /* Styles for new job highlighting */
+        .new-job > td { /* Apply background to cells of new job row */
+             background-color: #f0fff0 !important; /* Light green, !important might be needed depending on other styles */
+        }
+        .new-tag {
+            display: inline-block; /* Allows margin/padding */
+            background-color: #28a745; /* Bootstrap success green */
+            color: white;
+            padding: 2px 6px;
+            font-size: 0.75em;
+            font-weight: bold;
+            border-radius: 4px;
+            margin-right: 5px;
+            vertical-align: middle; /* Align with text */
         }
     </style>
 </head>
 <body>
     <h1>Robert Half Job Report</h1>
-    <p>Generated: 2025-04-08 21:01:37 CDT</p>
+    <p>Generated: 2025-04-08 23:33:09 CDT</p>
     <p>Filters: State = TX, Posted Within = PAST 24 HOURS</p>
-    <p>Found 12 jobs in TX and 11 remote jobs (Total Unique: 22). API reported 113 total jobs matching period.</p>
+    <p>Found 12 jobs in TX and 12 remote jobs (Total Unique: 23). Identified <span style="background-color: #f0fff0; padding: 1px 3px; border: 1px solid #ccc;">0 New Jobs</span> since last report. API reported 115 total jobs matching period.</p>
 
     <table>
         <thead>
@@ -61,6 +82,24 @@
             </tr>
         </thead>
         <tbody>
+
+            <tr>
+                <td><a href="https://www.roberthalf.com/us/en/job/portland-or/netsuite-administrator/03600-0013202595-usen" target="_blank">NetSuite Administrator</a></td>
+                <td class="location">Remote (US)</td>
+                <td class="pay-rate">$70 - $75/hourly</td>
+                <td>03600-0013202595-usen</td>
+                <td>2025-04-08 21:28 CDT</td>
+            </tr>
+            <tr class="description-row">
+                <td colspan="5">
+                    <details>
+                        <summary>View Job Details</summary>
+                        <div class="job-description">
+                            <p>Robert Half is searching for a NetSuite Consultant to support a software company based in Portland, OR. This NetSuite Consultant will provide<strong> </strong>critical post-go-live support, focusing on data cleanup, Excel template population, and ongoing assistance for the internal team. This position is 4 months with potential to extend and is 100% Remote. Apply today! </p><p><br></p><p><strong>Job Details:</strong></p><p><strong>Duration:</strong> 4 months with potential to extend</p><p><strong>Location:</strong> 100% remote</p><p><strong>Schedule:</strong> Monday–Friday (PST hours)</p><p><br></p><p><strong>Job responsibilities: </strong></p><ul><li>Perform data cleanup and organization, ensuring accuracy for reporting and imports.</li><li>Populate and manage exported Excel templates for system processes.</li><li>Participate in regular calls to provide updates and address queries.</li><li>Respond promptly to internal questions and support requests.</li><li>Conduct user testing to ensure system functionality and performance.</li><li>Develop and deliver training materials for NetSuite users.</li><li>Provide post-go-live support and guidance to staff.</li><li>Assist with ad-hoc tasks to support internal stakeholders and ease workload.</li></ul>
+                        </div>
+                    </details>
+                </td>
+            </tr>
 
             <tr>
                 <td><a href="https://www.roberthalf.com/us/en/job/tukwilla-wa/deployment-engineer/04410-0013160559-usen" target="_blank">Deployment Engineer</a></td>

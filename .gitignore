@@ -33,4 +33,4 @@ scraper.log
 session_data.json
 
 # gitingest output
-digest.txt
+*digest.txt
