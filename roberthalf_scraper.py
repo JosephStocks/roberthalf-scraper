@@ -1,3 +1,4 @@
+# filename: roberthalf_scraper.py
 import contextlib
 import json
 import logging
@@ -6,8 +7,8 @@ import subprocess
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
-from urllib.parse import urlparse  # Added for URL parsing
+from typing import Any  # Import Set for type hinting
+from urllib.parse import urlparse
 
 import pytz
 import requests
@@ -392,35 +393,32 @@ def get_or_refresh_session() -> tuple[list[dict[str, Any]], str]:
 def filter_jobs_by_state(jobs: list[dict[str, Any]], state_code: str) -> list[dict[str, Any]]:
     """Filter jobs to only include positions in the specified state or remote jobs."""
     # Debug log all jobs before filtering
-    logger.info(f"Before filtering - received {len(jobs)} jobs:")
-    for job in jobs:
-        logger.info(f"Job ID: {job.get('unique_job_number', 'N/A')}, "
-                   f"Title: {job.get('jobtitle', 'N/A')}, "
-                   f"State: {job.get('stateprovince', 'N/A')}, "
-                   f"Remote: {job.get('remote', 'N/A')}, "
-                   f"Country: {job.get('country', 'N/A')}")
+    logger.debug(f"Before filtering - received {len(jobs)} jobs for {state_code} or remote check.")
+    # Removed verbose per-job logging before filtering for brevity unless DEBUG level is on
 
     filtered_jobs = [
         job for job in jobs
-        if (job.get('stateprovince') == state_code) or  # Jobs in Texas
+        if (job.get('stateprovince') == state_code) or  # Jobs in target state
         (job.get('remote', '').lower() == 'yes' and job.get('country', '').lower() == 'us')  # US remote jobs
     ]
 
     # Count types of jobs for logging
-    state_jobs = len([j for j in filtered_jobs if j.get('stateprovince') == state_code])
-    remote_jobs = len([j for j in filtered_jobs if j.get('remote', '').lower() == 'yes'])
+    state_jobs_count = sum(1 for j in filtered_jobs if j.get('stateprovince') == state_code)
+    remote_jobs_count = sum(1 for j in filtered_jobs if j.get('remote', '').lower() == 'yes' and j.get('country', '').lower() == 'us')
 
-    # Debug log filtered jobs
-    logger.info(f"After filtering - kept {len(filtered_jobs)} jobs:")
-    for job in filtered_jobs:
-        logger.info(f"Job ID: {job.get('unique_job_number', 'N/A')}, "
-                   f"Title: {job.get('jobtitle', 'N/A')}, "
-                   f"State: {job.get('stateprovince', 'N/A')}, "
-                   f"Remote: {job.get('remote', 'N/A')}, "
-                   f"Country: {job.get('country', 'N/A')}")
+    # Debug log filtered jobs only if DEBUG enabled
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"After filtering - kept {len(filtered_jobs)} jobs:")
+        for job in filtered_jobs:
+            logger.debug(f"  Kept Job ID: {job.get('unique_job_number', 'N/A')}, "
+                       f"Title: {job.get('jobtitle', 'N/A')}, "
+                       f"State: {job.get('stateprovince', 'N/A')}, "
+                       f"Remote: {job.get('remote', 'N/A')}, "
+                       f"Country: {job.get('country', 'N/A')}")
 
-    logger.info(f"Filtered {state_jobs} {state_code} jobs and {remote_jobs} remote jobs from {len(jobs)} total jobs on page")
+    logger.info(f"Filtering kept {state_jobs_count} {state_code} jobs and {remote_jobs_count} US remote jobs from {len(jobs)} total on page")
     return filtered_jobs
+
 
 def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int = 1, is_remote: bool = False) -> dict[str, Any] | None:
     """Fetch jobs using the API directly with the correct session data."""
@@ -538,10 +536,18 @@ def fetch_with_retry(cookies_list: list[dict[str, Any]], user_agent: str, page_n
     logger.error(f"All {MAX_RETRIES} retry attempts failed for {'remote' if is_remote else 'local'} page {page_number}.")
     return None
 
-def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total_found: int, state_filter: str, job_period: str) -> str:
-    """Generates an HTML report string from the job list."""
+def _generate_html_report(
+    jobs_list: list[dict[str, Any]],
+    timestamp: str,
+    total_found: int,
+    state_filter: str,
+    job_period: str,
+    new_job_ids: set[str] # Added argument
+) -> str:
+    """Generates an HTML report string from the job list, highlighting new jobs."""
     num_tx_jobs = len([job for job in jobs_list if job.get('stateprovince') == state_filter])
     num_remote_jobs = len([job for job in jobs_list if job.get('remote', '').lower() == 'yes'])
+    num_new_jobs = len(new_job_ids) # Count new jobs
 
     # Convert UTC timestamp to CST
     cst = pytz.timezone('America/Chicago')
@@ -560,7 +566,7 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
         h1 {{ color: #333; }}
         p {{ color: #555; }}
         table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }} /* Added vertical-align */
         th {{ background-color: #f2f2f2; }}
         tr:nth-child(even) {{ background-color: #f9f9f9; }}
         a {{ color: #007bff; text-decoration: none; }}
@@ -591,7 +597,28 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
         }}
         .description-row td {{
             padding: 0 8px;
-            background-color: #fff;
+            background-color: #fff; /* Ensure description background is white */
+            border: none; /* Remove border for description cell */
+            border-bottom: 1px solid #ddd; /* Keep bottom border for row separation */
+        }}
+        .description-row.new-job td {{ /* Style description row if job is new */
+             background-color: #f0fff0; /* Light green */
+        }}
+
+        /* Styles for new job highlighting */
+        .new-job > td {{ /* Apply background to cells of new job row */
+             background-color: #f0fff0 !important; /* Light green, !important might be needed depending on other styles */
+        }}
+        .new-tag {{
+            display: inline-block; /* Allows margin/padding */
+            background-color: #28a745; /* Bootstrap success green */
+            color: white;
+            padding: 2px 6px;
+            font-size: 0.75em;
+            font-weight: bold;
+            border-radius: 4px;
+            margin-right: 5px;
+            vertical-align: middle; /* Align with text */
         }}
     </style>
 </head>
@@ -599,7 +626,7 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
     <h1>Robert Half Job Report</h1>
     <p>Generated: {formatted_timestamp}</p>
     <p>Filters: State = {state_filter}, Posted Within = {job_period.replace('_', ' ')}</p>
-    <p>Found {num_tx_jobs} jobs in {state_filter} and {num_remote_jobs} remote jobs (Total Unique: {len(jobs_list)}). API reported {total_found} total jobs matching period.</p>
+    <p>Found {num_tx_jobs} jobs in {state_filter} and {num_remote_jobs} remote jobs (Total Unique: {len(jobs_list)}). Identified <span style="background-color: #f0fff0; padding: 1px 3px; border: 1px solid #ccc;">{num_new_jobs} New Jobs</span> since last report. API reported {total_found} total jobs matching period.</p>
 
     <table>
         <thead>
@@ -622,6 +649,11 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
         state = job.get('stateprovince', '')
         is_remote = job.get('remote', '').lower() == 'yes'
         job_id = job.get('unique_job_number', 'N/A')
+
+        is_new = job_id in new_job_ids # Check if job is new
+        new_indicator_html = '<span class="new-tag">NEW</span> ' if is_new else ''
+        tr_class = ' class="new-job"' if is_new else ''
+        desc_row_class = 'description-row new-job' if is_new else 'description-row' # Class for description row
 
         # Format the posted date in CST
         posted_date_str = 'N/A'
@@ -649,15 +681,19 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
              except (ValueError, TypeError):
                  pay_rate_str = f"{pay_min_str} - {pay_max_str} ({pay_period})" # Fallback
 
+        # Main job data row
         html_content += f"""
-            <tr>
-                <td><a href="{job_url}" target="_blank">{title}</a></td>
+            <tr{tr_class}>
+                <td>{new_indicator_html}<a href="{job_url}" target="_blank">{title}</a></td>
                 <td class="location">{location_str}</td>
                 <td class="pay-rate">{pay_rate_str}</td>
                 <td>{job_id}</td>
                 <td>{posted_date_str}</td>
-            </tr>
-            <tr class="description-row">
+            </tr>"""
+
+        # Separate row for the description details
+        html_content += f"""
+            <tr class="{desc_row_class}">
                 <td colspan="5">
                     <details>
                         <summary>View Job Details</summary>
@@ -677,6 +713,52 @@ def _generate_html_report(jobs_list: list[dict[str, Any]], timestamp: str, total
 """
     return html_content
 
+
+def _find_latest_json_report(output_dir: Path, filename_prefix: str, state_filter: str) -> Path | None:
+    """Finds the most recent JSON report file in the output directory."""
+    try:
+        # Generate the expected filename pattern
+        pattern = f"{filename_prefix}_{state_filter.lower()}_jobs_*.json"
+        files = list(output_dir.glob(pattern))
+
+        if not files:
+            logger.info(f"No previous report files found matching pattern '{pattern}' in {output_dir}")
+            return None
+
+        # Sort files based on the timestamp in the filename (descending)
+        # Example filename: roberthalf_tx_jobs_20250409_015900.json
+        files.sort(key=lambda f: f.name.split('_')[-1].split('.')[0], reverse=True)
+
+        latest_file = files[0]
+        logger.info(f"Found latest previous report file: {latest_file.name}")
+        return latest_file
+
+    except Exception as e:
+        logger.error(f"Error finding latest JSON report in {output_dir}: {e}")
+        return None
+
+def _load_job_ids_from_json(json_file_path: Path) -> set[str]:
+    """Loads job IDs from a specified JSON report file."""
+    job_ids: set[str] = set()
+    if not json_file_path or not json_file_path.exists():
+        return job_ids # Return empty set if no file
+
+    try:
+        with open(json_file_path, encoding='utf-8') as f:
+            data = json.load(f)
+        jobs = data.get("jobs", [])
+        for job in jobs:
+            job_id = job.get("unique_job_number")
+            if job_id:
+                job_ids.add(job_id)
+        logger.info(f"Loaded {len(job_ids)} job IDs from previous report: {json_file_path.name}")
+    except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
+        logger.warning(f"Could not load or parse previous report {json_file_path.name}: {e}. Treating as no previous jobs.")
+
+    return job_ids
+
+
+# (Keep _run_git_command and _commit_and_push_report as they are)
 def _run_git_command(command: list[str], cwd: Path, sensitive: bool = False) -> tuple[bool, str, str]:
     """
     Runs a Git command using subprocess, logs carefully, and returns success, stdout, stderr.
@@ -828,6 +910,15 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
     tx_jobs = [job for job in jobs_list if job.get('stateprovince') == state_filter]
     remote_jobs = [job for job in jobs_list if job.get('remote', '').lower() == 'yes']
 
+    # --- Determine New Jobs ---
+    previous_report_file = _find_latest_json_report(output_dir, filename_prefix, state_filter)
+    previous_job_ids = _load_job_ids_from_json(previous_report_file)
+    current_job_ids = {job.get("unique_job_number") for job in jobs_list if job.get("unique_job_number")}
+    new_job_ids = current_job_ids - previous_job_ids
+    logger.info(f"Identified {len(new_job_ids)} new jobs compared to the previous report.")
+    # --- End Determine New Jobs ---
+
+
     # Ensure output and docs directories exist
     for dir_path in [output_dir, docs_dir]:
         try:
@@ -841,11 +932,16 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
     json_filename = f"{filename_prefix}_{state_filter.lower()}_jobs_{timestamp_str}.json"
     json_output_file_path = output_dir / json_filename
 
+    # Add 'is_new' flag to job data before saving JSON (optional, but could be useful)
+    for job in jobs_list:
+        job['is_new'] = job.get('unique_job_number') in new_job_ids
+
     results_data = {
-        "jobs": jobs_list,
+        "jobs": jobs_list, # Now includes 'is_new' flag
         "timestamp": iso_timestamp_str, # Use ISO format timestamp
         f"total_{state_filter.lower()}_jobs": len(tx_jobs),
         "total_remote_jobs": len(remote_jobs),
+        "total_new_jobs": len(new_job_ids), # Add count of new jobs
         "total_jobs_found_in_period": total_found,
         "job_post_period_filter": job_period,
         "state_filter": state_filter,
@@ -855,7 +951,7 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
     try:
         with open(json_output_file_path, 'w', encoding='utf-8') as f:
             json.dump(results_data, f, indent=2, ensure_ascii=False)
-        logger.info(f"Saved {len(jobs_list)} jobs ({len(tx_jobs)} in {state_filter}, {len(remote_jobs)} remote) to {json_output_file_path.resolve()}")
+        logger.info(f"Saved {len(jobs_list)} jobs ({len(tx_jobs)} in {state_filter}, {len(remote_jobs)} remote, {len(new_job_ids)} new) to {json_output_file_path.resolve()}")
     except Exception as e:
         logger.error(f"Failed to save JSON job results to {json_output_file_path.resolve()}: {e}")
 
@@ -864,7 +960,10 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
     html_output_file_path = docs_dir / html_filename # Ensure it's relative for Git commands
 
     try:
-        html_content = _generate_html_report(jobs_list, iso_timestamp_str, total_found, state_filter, job_period)
+        # Pass the set of new job IDs to the generator
+        html_content = _generate_html_report(
+            jobs_list, iso_timestamp_str, total_found, state_filter, job_period, new_job_ids
+        )
         with open(html_output_file_path, 'w', encoding='utf-8') as f:
             f.write(html_content)
         logger.info(f"Generated HTML report at: {html_output_file_path.resolve()}")
@@ -885,7 +984,18 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
         job_details = []
         # Sort for notification consistency (same key as HTML)
         jobs_list.sort(key=lambda x: (x.get('date_posted', '1970-01-01T00:00:00Z'), x.get('jobtitle', '')), reverse=True) # Ensure valid default date
-        for job in jobs_list[:5]:
+
+        # Prepare list of top jobs, including new ones first if possible
+        new_jobs_top = [j for j in jobs_list if j.get('unique_job_number') in new_job_ids][:5]
+        old_jobs_top = [j for j in jobs_list if j.get('unique_job_number') not in new_job_ids][:5 - len(new_jobs_top)]
+        top_jobs_for_notification = new_jobs_top + old_jobs_top
+
+        for job in top_jobs_for_notification: # Show up to 5 jobs
+            job_id = job.get('unique_job_number')
+            is_new = job_id in new_job_ids
+            # Use HTML for Pushover notification styling
+            new_indicator_pushover = '<b><font color="#28a745">NEW!</font></b> ' if is_new else ''
+
             title = job.get('jobtitle', 'Unknown Title')
             city = job.get('city', 'Unknown City')
             state = job.get('stateprovince', '')
@@ -895,31 +1005,43 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
             pay_period = job.get('payrate_period', '').lower()
 
             location = "Remote" if is_remote else f"{city}, {state}"
-            detail = f"• {title} ({location})"
+            # Add the new indicator before the bullet point
+            detail = f"{new_indicator_pushover}• {title} ({location})"
             if pay_min_str and pay_max_str and pay_period:
-                with contextlib.suppress(ValueError, TypeError): # Ignore if pay can't be formatted nicely for notification
+                with contextlib.suppress(ValueError, TypeError): # Omit pay if formatting pay fails
                     detail += f"\n  ${int(float(pay_min_str)):,} - ${int(float(pay_max_str)):,}/{pay_period}"
             job_details.append(detail)
 
         # Use single backslash for newline join
         details_text = '\n'.join(job_details)
-        remaining = len(jobs_list) - 5 if len(jobs_list) > 5 else 0
+        remaining = len(jobs_list) - len(top_jobs_for_notification)
 
-        # Construct notification message
+        # --- Construct notification message ---
+        # Use count of new jobs from the calculated set
+        num_new_jobs_found = len(new_job_ids)
+        num_tx_jobs_state = len(tx_jobs) # Total state jobs in current report
+        num_remote_jobs_state = len(remote_jobs) # Total remote jobs in current report
+
         if test_mode and len(jobs_list) == 0:
+             # Test mode with no actual jobs found
              message = (
                     f"🧪 TEST MODE: Simulating job notification!\n\n"
-                    f"Found 3 test jobs in {state_filter}:\n"
-                    f"• Test Software Engineer (Austin)\n  $120,000 - $150,000/yearly\n"
-                    f"• Test Developer (Dallas)\n  $130,000 - $160,000/yearly\n"
-                    f"• Test DevOps Engineer (Houston)\n  $140,000 - $170,000/yearly"
-                    f"\n\nClick link to view simulated HTML report." # Adjusted test message
+                    f"<b><font color=\"#28a745\">NEW!</font></b> Found 3 test jobs in {state_filter}:\n"
+                    f"<b><font color=\"#28a745\">NEW!</font></b> • Test Software Engineer (Austin)\n  $120,000 - $150,000/yearly\n"
+                    f"<b><font color=\"#28a745\">NEW!</font></b> • Test Developer (Dallas)\n  $130,000 - $160,000/yearly\n"
+                    f"• Test DevOps Engineer (Houston)\n  $140,000 - $170,000/yearly" # Example mixed
+                    f"\n\nClick link to view simulated HTML report."
              )
         else:
-            message = f"Found {len(tx_jobs)} new {state_filter} jobs and {len(remote_jobs)} remote jobs in the {job_period.lower().replace('_', ' ')}!"
+            # Regular mode or test mode with actual jobs
+            if num_new_jobs_found > 0:
+                 message = f"Found {num_new_jobs_found} NEW jobs! ({num_tx_jobs_state} in {state_filter}, {num_remote_jobs_state} remote total) in the {job_period.lower().replace('_', ' ')}."
+            else:
+                 message = f"No new jobs found. ({num_tx_jobs_state} in {state_filter}, {num_remote_jobs_state} remote total) in the {job_period.lower().replace('_', ' ')}."
+
             if job_details:
                 # Use single backslash for newlines
-                message += f"\n\nLatest positions:\n{details_text}"
+                message += f"\n\nLatest/Newest:\n{details_text}"
             if remaining > 0:
                 # Use single backslash for newlines
                 message += f"\n\n...and {remaining} more jobs"
@@ -942,14 +1064,16 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
                 pushover_url_title = f"View Full {state_filter}/Remote Job List"
 
             # Send notification (pushnotify.py reads env vars directly for tokens/keys)
+            # ADD html=1 parameter
             send_pushover_notification(
                 message=message,
                 user="Joe", # Consider making user configurable via .env if needed
                 title=f"Robert Half {state_filter} & Remote Jobs",
                 url=pushover_url, # Use validated/logged URL
-                url_title=pushover_url_title # Use associated title
+                url_title=pushover_url_title, # Use associated title
+                html=1 # Enable HTML formatting for the message
             )
-            logger.info("Push notification sent successfully.")
+            logger.info("Push notification sent successfully with HTML enabled.")
         except Exception as notify_err:
             logger.error(f"Failed to send push notification: {notify_err}")
     elif not pushover_enabled:
@@ -991,15 +1115,9 @@ def scrape_roberthalf_jobs() -> None:
                     is_valid = validate_session(session_cookies, session_user_agent)
                     if not is_valid:
                         logger.error("Session became invalid during pagination. Stopping scrape.")
-                        # Optionally try to refresh session again here?
-                        # For now, just stop.
-                        # session_cookies, session_user_agent = get_or_refresh_session() # Example refresh attempt
-                        # if not session_cookies: raise RuntimeError("Failed to re-validate session.")
-                        # continue # Retry the fetch with the new session? Might cause loops. Careful.
                         raise RuntimeError("Session became invalid and could not be refreshed during pagination.")
                     else:
                         logger.error(f"Session appears valid, but failed to fetch {job_type_str} page {page_number} after retries. Stopping.")
-                        # Decide: stop all, or just stop this type (local/remote)? Stop all for now.
                         raise RuntimeError(f"Failed to fetch {job_type_str} page {page_number} despite valid session.")
 
 
@@ -1022,18 +1140,15 @@ def scrape_roberthalf_jobs() -> None:
                 logger.info(f"Received {len(jobs_on_page)} {job_type_str} jobs on page {page_number}.")
 
                 # Filter jobs by state (or remote)
-                # filter_jobs_by_state logic now correctly includes TX state OR US remote
                 state_jobs_on_page = filter_jobs_by_state(jobs_on_page, FILTER_STATE)
                 all_filtered_jobs.extend(state_jobs_on_page)
 
                 # Check if this was the last page based on API reporting fewer than page size
-                # Assuming page size is 25 as hardcoded in fetch_jobs
                 if len(jobs_on_page) < 25:
                     logger.info(f"Received less than page size ({len(jobs_on_page)} < 25). Assuming last page for {job_type_str} jobs.")
                     break
 
                 # Check if we've fetched more pages than reasonably expected based on 'found' count
-                # Example: If API reported 60 jobs, and page size is 25, don't fetch page 4.
                 if jobs_found_this_type is not None and jobs_found_this_type >= 0:
                      max_pages_expected = (jobs_found_this_type + 24) // 25 # Ceiling division
                      if page_number >= max_pages_expected:
@@ -1045,8 +1160,6 @@ def scrape_roberthalf_jobs() -> None:
                 page_delay = random.uniform(PAGE_DELAY_MIN, PAGE_DELAY_MAX)
                 logger.info(f"Waiting {page_delay:.2f} seconds before fetching {job_type_str} page {page_number}")
                 time.sleep(page_delay)
-                # Additional base delay? Maybe combine them or just use the page delay.
-                # time.sleep(REQUEST_DELAY_SECONDS)
 
             # Add delay between remote and local job fetching
             if not is_remote:
@@ -1065,7 +1178,6 @@ def scrape_roberthalf_jobs() -> None:
                 else:
                     duplicates_found += 1
             else:
-                 # Handle jobs without a unique ID? Maybe log them.
                  logger.warning(f"Job found without a 'unique_job_number': {job.get('jobtitle', 'N/A')}")
 
         unique_job_list = list(unique_jobs_dict.values())
