@@ -11,6 +11,11 @@ dependencies = [
     "requests>=2.32.3",
 ]
 
+[dependency-groups]
+dev = [
+    "ruff>=0.11.5",
+]
+
 [tool.ruff]
 # Set a more traditional line length since we're not using Black
 line-length = 100

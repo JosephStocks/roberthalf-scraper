@@ -34,3 +34,6 @@ session_data.json
 
 # gitingest output
 *digest.txt
+
+# output files
+output/

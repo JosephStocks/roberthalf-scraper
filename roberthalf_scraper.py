@@ -1,5 +1,6 @@
 # filename: roberthalf_scraper.py
 import contextlib
+import csv
 import json
 import logging
 import random
@@ -81,6 +82,8 @@ TEST_MODE = config.get('TEST_MODE', False)
 GITHUB_ACCESS_TOKEN = config.get('GITHUB_ACCESS_TOKEN', None) # Get token from config
 GITHUB_PAGES_URL = config.get('GITHUB_PAGES_URL', None) # Get report URL from config
 
+# Define the CSV file path
+CSV_FILE_PATH = OUTPUT_DIR / 'job_data.csv'
 
 # --- Helper Functions ---
 
@@ -542,12 +545,12 @@ def _generate_html_report(
     total_found: int,
     state_filter: str,
     job_period: str,
-    new_job_ids: set[str] # Added argument
+    new_job_ids: set[str]
 ) -> str:
     """Generates an HTML report string from the job list, highlighting new jobs."""
     num_tx_jobs = len([job for job in jobs_list if job.get('stateprovince') == state_filter])
     num_remote_jobs = len([job for job in jobs_list if job.get('remote', '').lower() == 'yes'])
-    num_new_jobs = len(new_job_ids) # Count new jobs
+    num_new_jobs = len(new_job_ids)  # Count new jobs
 
     # Convert UTC timestamp to CST
     cst = pytz.timezone('America/Chicago')
@@ -565,60 +568,70 @@ def _generate_html_report(
         body {{ font-family: sans-serif; margin: 20px; }}
         h1 {{ color: #333; }}
         p {{ color: #555; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }} /* Added vertical-align */
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }}
+        th, td {{
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            vertical-align: top;
+        }}
         th {{ background-color: #f2f2f2; }}
         tr:nth-child(even) {{ background-color: #f9f9f9; }}
         a {{ color: #007bff; text-decoration: none; }}
         a:hover {{ text-decoration: underline; }}
-        .pay-rate {{ white-space: nowrap; }}
-        .location {{ white-space: nowrap; }}
-        details {{ margin: 10px 0; }}
-        summary {{
+        .pay-rate, .location {{ white-space: nowrap; }}
+
+        /* Improved styling for the expandable content */
+        .job-row {{
             cursor: pointer;
-            color: #555; /* Changed from #007bff to a subtle gray */
-            padding: 6px; /* Slightly reduced padding */
-            background-color: #f8f9fa;
-            border: 1px solid #dee2e6;
-            border-radius: 4px;
-            font-size: 0.9rem; /* Reduced font size */
-            font-weight: normal; /* Ensure normal weight */
         }}
-        summary:hover {{
-            background-color: #e9ecef;
-            color: #333; /* Slightly darker on hover for feedback */
+        .job-row:hover {{
+            background-color: #f0f8ff;
         }}
         .job-description {{
             padding: 15px;
             background-color: #fff;
-            border: 1px solid #dee2e6;
-            border-radius: 4px;
-            margin-top: 8px;
+            border-top: none;
+            margin-top: 0;
         }}
-        .description-row td {{
-            padding: 0 8px;
-            background-color: #fff; /* Ensure description background is white */
-            border: none; /* Remove border for description cell */
-            border-bottom: 1px solid #ddd; /* Keep bottom border for row separation */
-        }}
-        .description-row.new-job td {{ /* Style description row if job is new */
-             background-color: #f0fff0; /* Light green */
+        .description-container {{
+            padding: 0;
+            border-top: none;
+            background-color: #fff;
         }}
 
-        /* Styles for new job highlighting */
-        .new-job > td {{ /* Apply background to cells of new job row */
-             background-color: #f0fff0 !important; /* Light green, !important might be needed depending on other styles */
+        /* Hide the details marker by default */
+        .job-row .expander {{
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            text-align: center;
+            line-height: 20px;
+            border-radius: 3px;
+            margin-right: 8px;
+            background-color: #f2f2f2;
+            font-weight: bold;
+            font-size: 14px;
+        }}
+
+        /* Styling for new job highlighting */
+        .new-job .title-cell {{
+            background-color: #f0fff0;
         }}
         .new-tag {{
-            display: inline-block; /* Allows margin/padding */
-            background-color: #28a745; /* Bootstrap success green */
+            display: inline-block;
+            background-color: #28a745;
             color: white;
             padding: 2px 6px;
             font-size: 0.75em;
             font-weight: bold;
             border-radius: 4px;
             margin-right: 5px;
-            vertical-align: middle; /* Align with text */
+            vertical-align: middle;
         }}
     </style>
 </head>
@@ -628,7 +641,7 @@ def _generate_html_report(
     <p>Filters: State = {state_filter}, Posted Within = {job_period.replace('_', ' ')}</p>
     <p>Found {num_tx_jobs} jobs in {state_filter} and {num_remote_jobs} remote jobs (Total Unique: {len(jobs_list)}). Identified <span style="background-color: #f0fff0; padding: 1px 3px; border: 1px solid #ccc;">{num_new_jobs} New Jobs</span> since last report. API reported {total_found} total jobs matching period.</p>
 
-    <table>
+    <table id="jobTable">
         <thead>
             <tr>
                 <th>Title</th>
@@ -643,17 +656,16 @@ def _generate_html_report(
     # Sort jobs by posted date descending, then title
     jobs_list.sort(key=lambda x: (x.get('date_posted', '1970-01-01'), x.get('jobtitle', '')), reverse=True)
 
-    for job in jobs_list:
+    for idx, job in enumerate(jobs_list, 1):
         title = job.get('jobtitle', 'N/A')
         city = job.get('city', 'N/A')
         state = job.get('stateprovince', '')
         is_remote = job.get('remote', '').lower() == 'yes'
         job_id = job.get('unique_job_number', 'N/A')
 
-        is_new = job_id in new_job_ids # Check if job is new
+        is_new = job_id in new_job_ids  # Check if job is new
         new_indicator_html = '<span class="new-tag">NEW</span> ' if is_new else ''
-        tr_class = ' class="new-job"' if is_new else ''
-        desc_row_class = 'description-row new-job' if is_new else 'description-row' # Class for description row
+        row_class = 'job-row new-job' if is_new else 'job-row'
 
         # Format the posted date in CST
         posted_date_str = 'N/A'
@@ -666,7 +678,6 @@ def _generate_html_report(
                 posted_date_str = date_posted  # Fallback to raw value if parsing fails
 
         job_url = job.get('job_detail_url', '#')
-
         location_str = f"{city}, {state}" if not is_remote else "Remote (US)"
 
         pay_min_str = job.get('payrate_min')
@@ -674,33 +685,30 @@ def _generate_html_report(
         pay_period = job.get('payrate_period', '').lower()
         pay_rate_str = "N/A"
         if pay_min_str and pay_max_str and pay_period:
-             try: # Handle potential float conversion errors
+            try:  # Handle potential float conversion errors
                 pay_min = int(float(pay_min_str))
                 pay_max = int(float(pay_max_str))
                 pay_rate_str = f"${pay_min:,} - ${pay_max:,}/{pay_period}"
-             except (ValueError, TypeError):
-                 pay_rate_str = f"{pay_min_str} - {pay_max_str} ({pay_period})" # Fallback
+            except (ValueError, TypeError):
+                pay_rate_str = f"{pay_min_str} - {pay_max_str} ({pay_period})"  # Fallback
 
         # Main job data row
         html_content += f"""
-            <tr{tr_class}>
-                <td>{new_indicator_html}<a href="{job_url}" target="_blank">{title}</a></td>
+            <tr class="{row_class}" data-job-id="{idx}">
+                <td class="title-cell"><span class="expander">+</span> {new_indicator_html}<a href="{job_url}" target="_blank">{title}</a></td>
                 <td class="location">{location_str}</td>
                 <td class="pay-rate">{pay_rate_str}</td>
                 <td>{job_id}</td>
                 <td>{posted_date_str}</td>
             </tr>"""
 
-        # Separate row for the description details
+        # Description row (hidden by default)
         html_content += f"""
-            <tr class="{desc_row_class}">
-                <td colspan="5">
-                    <details>
-                        <summary>View Job Details</summary>
-                        <div class="job-description">
-                            {job.get('description', 'No description available.')}
-                        </div>
-                    </details>
+            <tr class="description-row" id="job-{idx}" style="display:none;">
+                <td colspan="5" class="description-container">
+                    <div class="job-description">
+                        {job.get('description', 'No description available.')}
+                    </div>
                 </td>
             </tr>
 """
@@ -708,6 +716,29 @@ def _generate_html_report(
     html_content += """
         </tbody>
     </table>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add click handlers to job rows
+            const jobRows = document.querySelectorAll('.job-row');
+
+            jobRows.forEach(row => {
+                row.addEventListener('click', function() {
+                    const jobId = this.getAttribute('data-job-id');
+                    const descriptionRow = document.getElementById('job-' + jobId);
+                    const expander = this.querySelector('.expander');
+
+                    if (descriptionRow.style.display === 'none') {
+                        descriptionRow.style.display = 'table-row';
+                        expander.textContent = '-';
+                    } else {
+                        descriptionRow.style.display = 'none';
+                        expander.textContent = '+';
+                    }
+                });
+            });
+        });
+    </script>
 </body>
 </html>
 """
@@ -911,11 +942,10 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
     remote_jobs = [job for job in jobs_list if job.get('remote', '').lower() == 'yes']
 
     # --- Determine New Jobs ---
-    previous_report_file = _find_latest_json_report(output_dir, filename_prefix, state_filter)
-    previous_job_ids = _load_job_ids_from_json(previous_report_file)
+    previous_job_ids = read_existing_job_data(CSV_FILE_PATH)
     current_job_ids = {job.get("unique_job_number") for job in jobs_list if job.get("unique_job_number")}
     new_job_ids = current_job_ids - previous_job_ids
-    logger.info(f"Identified {len(new_job_ids)} new jobs compared to the previous report.")
+    logger.info(f"Identified {len(new_job_ids)} new jobs compared to the CSV job history.")
     # --- End Determine New Jobs ---
 
 
@@ -1035,9 +1065,9 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
         else:
             # Regular mode or test mode with actual jobs
             if num_new_jobs_found > 0:
-                 message = f"Found {num_new_jobs_found} NEW jobs! ({num_tx_jobs_state} in {state_filter}, {num_remote_jobs_state} remote total) in the {job_period.lower().replace('_', ' ')}."
+                 message = f"Found {num_new_jobs_found} NEW jobs since the previous report! {job_period.lower().replace('_', ' ')}: {num_tx_jobs_state} in {state_filter}, {num_remote_jobs_state} remote total."
             else:
-                 message = f"No new jobs found. ({num_tx_jobs_state} in {state_filter}, {num_remote_jobs_state} remote total) in the {job_period.lower().replace('_', ' ')}."
+                 message = f"No new jobs since the previous report. {job_period.lower().replace('_', ' ')}: {num_tx_jobs_state} in {state_filter}, {num_remote_jobs_state} remote total."
 
             if job_details:
                 # Use single backslash for newlines
@@ -1186,8 +1216,9 @@ def scrape_roberthalf_jobs() -> None:
         else:
              logger.info(f"Found {len(unique_job_list)} unique jobs (no duplicates detected).")
 
-        # Save final results, passing the total reported by the API and the config
+        existing_jobs = read_existing_job_data(CSV_FILE_PATH)
         save_job_results(unique_job_list, total_jobs_api_reported, config) # Pass config here
+        append_job_data_to_csv(unique_job_list, CSV_FILE_PATH, existing_jobs)
 
     except RuntimeError as rt_err:
         logger.critical(f"Runtime error, likely session or fetch failure: {rt_err}")
@@ -1201,5 +1232,40 @@ def scrape_roberthalf_jobs() -> None:
         logger.info(f"Total execution time: {end_time - start_time:.2f} seconds")
 
 
+# Function to read existing job data from CSV
+
+def read_existing_job_data(csv_file_path: Path) -> set[str]:
+    existing_jobs = set()
+    if csv_file_path.exists():
+        with open(csv_file_path, newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                existing_jobs.add(row['Job ID'])
+    return existing_jobs
+
+# Function to append new job data to CSV
+
+def append_job_data_to_csv(jobs: list[dict[str, Any]], csv_file_path: Path, existing_jobs: set[str]) -> None:
+    fieldnames = ['Job ID', 'Job Title', 'Date First Seen (UTC)', 'Date Posted', 'Location', 'Company Name', 'Pay Rate', 'Job URL']
+    is_new_file = not csv_file_path.exists()
+    with open(csv_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if is_new_file:
+            writer.writeheader()
+        for job in jobs:
+            job_id = job.get('unique_job_number')
+            if job_id not in existing_jobs:
+                writer.writerow({
+                    'Job ID': job_id,
+                    'Job Title': job.get('jobtitle', 'N/A'),
+                    'Date First Seen (UTC)': datetime.now(UTC).isoformat(),
+                    'Date Posted': job.get('date_posted', 'N/A'),
+                    'Location': f"{job.get('city', 'N/A')}, {job.get('stateprovince', 'N/A')}" if job.get('remote', '').lower() != 'yes' else 'Remote',
+                    'Company Name': job.get('source', 'N/A'),
+                    'Pay Rate': f"${job.get('payrate_min', 'N/A')} - ${job.get('payrate_max', 'N/A')}/{job.get('payrate_period', 'N/A')}",
+                    'Job URL': job.get('job_detail_url', 'N/A')
+                })
+
+# Ensure this block is at the bottom of the file
 if __name__ == "__main__":
     scrape_roberthalf_jobs()
