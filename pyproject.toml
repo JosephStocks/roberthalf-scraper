@@ -5,6 +5,7 @@ description = "Scraping tool using Playwright with proxy support"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "openai>=1.76.0",
     "playwright>=1.51.0",
     "python-dotenv>=1.1.0",
     "pytz>=2025.2",
@@ -66,6 +67,7 @@ select = [
 # Ignore some rules that might be too strict or conflict with your style preferences
 ignore = [
     "E501",  # Line too long (handled by formatter)
+    "E701",
 ]
 # Allow unused variables prefixed with underscores
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"

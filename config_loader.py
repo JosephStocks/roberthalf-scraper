@@ -1,3 +1,4 @@
+# filename: config_loader.py
 """
 Configuration loader utility for different environments.
 """
@@ -61,7 +62,8 @@ def _get_typed_env_value(key: str, default: Any, value_type: type) -> Any:
     """Helper to get env value, convert type, log errors, and return default on failure."""
     str_value = get_env_value(key, str(default) if default is not None else None)
     if str_value is None:
-        logger.warning(f"Environment variable {key} not found. Using default: {default}")
+        # Let the caller decide if warning is needed, this function just returns the default
+        # logger.warning(f"Environment variable {key} not found. Using default: {default}")
         return default
 
     try:
@@ -117,36 +119,57 @@ def load_config_values() -> dict[str, Any]:
     # === Retries ===
     config['MAX_RETRIES'] = _get_typed_env_value('MAX_RETRIES', 3, int)
 
-    # === Proxy Configuration (Load as strings, parsing/validation happens in utils.py) ===
-    # Directly load the variables used by utils.get_proxy_config
+    # === Proxy Configuration ===
     config['USE_PROXY'] = _get_typed_env_value('USE_PROXY', False, bool)
-    config['PROXY_SERVER'] = get_env_value('PROXY_SERVER') # Keep None if not set
-    config['PROXY_AUTH'] = get_env_value('PROXY_AUTH') # Keep None if not set
-    config['PROXY_BYPASS'] = get_env_value('PROXY_BYPASS') # Keep None if not set
+    config['PROXY_SERVER'] = get_env_value('PROXY_SERVER')
+    config['PROXY_AUTH'] = get_env_value('PROXY_AUTH')
+    config['PROXY_BYPASS'] = get_env_value('PROXY_BYPASS')
 
     # === Pushover Notifications ===
     config['PUSHOVER_ENABLED'] = _get_typed_env_value('PUSHOVER_ENABLED', True, bool)
-    config['PUSHOVER_TOKEN'] = get_env_value('PUSHOVER_TOKEN') # Keep None if not set
-    # Load specific user keys directly (pushnotify.py retrieves them via os.getenv)
-    config['PUSHOVER_USER_KEY_JOE'] = get_env_value('PUSHOVER_USER_KEY_JOE') # Keep None if not set
-    config['PUSHOVER_USER_KEY_KATIE'] = get_env_value('PUSHOVER_USER_KEY_KATIE') # Keep None if not set
+    config['PUSHOVER_TOKEN'] = get_env_value('PUSHOVER_TOKEN')
+    config['PUSHOVER_USER_KEY_JOE'] = get_env_value('PUSHOVER_USER_KEY_JOE')
+    config['PUSHOVER_USER_KEY_KATIE'] = get_env_value('PUSHOVER_USER_KEY_KATIE')
 
-    # === RobertHalf Credentials (Load as strings, check existence in login function) ===
-    config['ROBERTHALF_USERNAME'] = get_env_value('ROBERTHALF_USERNAME') # Keep None if not set
-    config['ROBERTHALF_PASSWORD'] = get_env_value('ROBERTHALF_PASSWORD') # Keep None if not set
+    # === RobertHalf Credentials ===
+    config['ROBERTHALF_USERNAME'] = get_env_value('ROBERTHALF_USERNAME')
+    config['ROBERTHALF_PASSWORD'] = get_env_value('ROBERTHALF_PASSWORD')
 
     # === Git & Report URL Configuration ===
-    config['GITHUB_ACCESS_TOKEN'] = get_env_value('GITHUB_ACCESS_TOKEN') # Keep None if not set
-    config['GITHUB_PAGES_URL'] = get_env_value('GITHUB_PAGES_URL') # Keep None if not set (Report URL)
+    config['GITHUB_ACCESS_TOKEN'] = get_env_value('GITHUB_ACCESS_TOKEN')
+    config['GITHUB_PAGES_URL'] = get_env_value('GITHUB_PAGES_URL')
 
-    # --- Add any other configuration variables used in the project here ---
+    # === AI Job Matching Configuration ===
+    config['MATCHING_ENABLED'] = _get_typed_env_value('MATCHING_ENABLED', False, bool)
+    config['OPENAI_API_KEY'] = get_env_value('OPENAI_API_KEY') # Keep as string, or None
+    config['CANDIDATE_PROFILE_PATH'] = _get_typed_env_value('CANDIDATE_PROFILE_PATH', 'candidate_profile.json', str)
+    config['MATCHING_MODEL_TIER1'] = _get_typed_env_value('MATCHING_MODEL_TIER1', 'gpt-4o-mini', str)
+    config['MATCHING_THRESHOLD_TIER1'] = _get_typed_env_value('MATCHING_THRESHOLD_TIER1', 60, int)
+    config['MATCHING_MODEL_TIER2'] = _get_typed_env_value('MATCHING_MODEL_TIER2', 'gpt-4.1-mini', str)
+    config['MATCHING_THRESHOLD_FINAL'] = _get_typed_env_value('MATCHING_THRESHOLD_FINAL', 75, int)
+
+    # --- Validate Thresholds (0-100) ---
+    for key in ['MATCHING_THRESHOLD_TIER1', 'MATCHING_THRESHOLD_FINAL']:
+        threshold = config[key]
+        if not (0 <= threshold <= 100):
+            logger.warning(f"Configuration value for {key} ({threshold}) is outside the valid range [0, 100]. Clamping.")
+            config[key] = max(0, min(100, threshold))
+
+    # Log matching status
+    if config['MATCHING_ENABLED']:
+        logger.info(f"AI Job Matching Enabled: Tier1='{config['MATCHING_MODEL_TIER1']}' (Threshold {config['MATCHING_THRESHOLD_TIER1']}), Tier2='{config['MATCHING_MODEL_TIER2']}' (Final Threshold {config['MATCHING_THRESHOLD_FINAL']})")
+        if not config['OPENAI_API_KEY']:
+            logger.warning("MATCHING_ENABLED is true, but OPENAI_API_KEY is not set!")
+    else:
+        logger.info("AI Job Matching Disabled.")
+
 
     logger.info("Configuration loading complete.")
-    # Optionally log loaded config values at DEBUG level
     # import json
     # logger.debug(f"Loaded configuration: {json.dumps(config, indent=2, default=str)}")
 
     return config
+
 
 # --- Example Usage (optional, for testing the module) ---
 # if __name__ == "__main__":

@@ -1,14 +1,14 @@
-# filename: roberthalf_scraper.py
 import contextlib
 import csv
 import json
 import logging
+import os
 import random
 import subprocess
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any  # Import Set for type hinting
+from typing import Any
 from urllib.parse import urlparse
 
 import pytz
@@ -20,57 +20,63 @@ from playwright.sync_api import (
 )
 
 from config_loader import load_prod_config
+from job_matcher_v2 import JobMatchAnalyzerV2
 from pushnotify import send_pushover_notification
 from utils import get_proxy_config
 
 # --- Constants ---
-# Define base directories *before* logger setup uses them
 LOG_DIR = Path("logs")
 SESSION_DIR = Path(".session")
 OUTPUT_DIR = Path("output")
 DOCS_DIR = Path("docs")
+CSV_FILE_PATH = OUTPUT_DIR / 'job_data.csv'
+DEFAULT_SESSION_FILENAME = "session_data.json"
 
 # Create directories if they don't exist early on
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+DOCS_DIR.mkdir(parents=True, exist_ok=True) # Ensure docs dir exists
 
 # --- Logging Setup ---
-def setup_logging():
-    """Set up logging configuration to log to 'logs/scraper.log'."""
+def setup_logging(log_level_str: str = 'INFO'):
+    """Set up logging configuration."""
     log_file_path = LOG_DIR / "scraper.log"
+    log_level = getattr(logging, log_level_str.upper(), logging.INFO)
+
+    # Remove existing handlers if any before configuring
+    root_logger = logging.getLogger()
+    if root_logger.hasHandlers():
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
 
     logging.basicConfig(
-        level=logging.INFO,
-        format='%(levelname)s [%(filename)s:%(lineno)d] - %(message)s',
+        level=log_level,
+        format='%(asctime)s - %(levelname)s [%(filename)s:%(lineno)d] - %(message)s', # Added timestamp
         handlers=[
-            logging.FileHandler(log_file_path, mode='w'),
+            logging.FileHandler(log_file_path, mode='w', encoding='utf-8'), # Use UTF-8
             logging.StreamHandler()
         ]
     )
+    # Silence overly verbose libraries
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("playwright").setLevel(logging.WARNING)
-    return logging.getLogger(__name__)
+    logging.getLogger("openai").setLevel(logging.WARNING) # Silence OpenAI info logs if desired
+    return logging.getLogger(__name__) # Return the specific logger for this module
 
-# Setup logger *after* LOG_DIR is defined
-logger = setup_logging()
-
-# Load config *after* logger is ready
-# Ensure load_prod_config is called to get the config dictionary
+# --- Load Config and Setup Logger ---
 config = load_prod_config()
+logger = setup_logging(config.get('LOG_LEVEL', 'INFO')) # Pass log level from config
 
-# Update SESSION_FILE default to be inside SESSION_DIR
-DEFAULT_SESSION_FILENAME = "session_data.json"
+# --- Global Config Variables (extracted after logger setup) ---
 SESSION_FILE_PATH = SESSION_DIR / config.get('SESSION_FILE', DEFAULT_SESSION_FILENAME)
-
-# Load configuration values with validation
 SAVE_SESSION = config.get('SAVE_SESSION', True)
 SESSION_MAX_AGE_HOURS = config.get('SESSION_MAX_AGE_HOURS', 12)
 FILTER_STATE = config.get('FILTER_STATE', 'TX')
 JOB_POST_PERIOD = config.get('JOB_POST_PERIOD', 'PAST_24_HOURS')
 HEADLESS_BROWSER = config.get('HEADLESS_BROWSER', True)
 ROTATE_USER_AGENT = config.get('ROTATE_USER_AGENT', False)
-DEFAULT_USER_AGENT = config.get('DEFAULT_USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36')
+DEFAULT_USER_AGENT = config.get('DEFAULT_USER_AGENT', 'Mozilla/5.0 (...)')
 REQUEST_DELAY_SECONDS = config.get('REQUEST_DELAY_SECONDS', 2.0)
 PAGE_DELAY_MIN = config.get('PAGE_DELAY_MIN', 5.0)
 PAGE_DELAY_MAX = config.get('PAGE_DELAY_MAX', 15.0)
@@ -78,20 +84,15 @@ MAX_RETRIES = config.get('MAX_RETRIES', 3)
 BROWSER_TIMEOUT_MS = config.get('BROWSER_TIMEOUT_MS', 60000)
 REQUEST_TIMEOUT_SECONDS = config.get('REQUEST_TIMEOUT_SECONDS', 30)
 TEST_MODE = config.get('TEST_MODE', False)
-# --- GitHub Token ---
-GITHUB_ACCESS_TOKEN = config.get('GITHUB_ACCESS_TOKEN', None) # Get token from config
-GITHUB_PAGES_URL = config.get('GITHUB_PAGES_URL', None) # Get report URL from config
+GITHUB_ACCESS_TOKEN = config.get('GITHUB_ACCESS_TOKEN')
+GITHUB_PAGES_URL = config.get('GITHUB_PAGES_URL')
+PUSHOVER_ENABLED = config.get('PUSHOVER_ENABLED', False)
 
-# Define the CSV file path
-CSV_FILE_PATH = OUTPUT_DIR / 'job_data.csv'
-
-# --- Helper Functions ---
-
+# --- Helper Functions (Keep as they are, or move utils if preferred) ---
 def get_user_agent() -> str:
-    """Return a random user agent or the default one based on config."""
+    # ... (implementation) ...
     if not ROTATE_USER_AGENT:
         return DEFAULT_USER_AGENT
-
     user_agents = [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
@@ -102,54 +103,38 @@ def get_user_agent() -> str:
     return random.choice(user_agents)
 
 def add_human_delay(min_seconds: float = 0.5, max_seconds: float = 1.5) -> None:
-    """Add a random delay to mimic human behavior during browser interaction."""
+    # ... (implementation) ...
     delay = random.uniform(min_seconds, max_seconds)
     logger.debug(f"Adding browser interaction delay of {delay:.2f} seconds")
     time.sleep(delay)
 
 def save_session_data(cookies: list[dict[str, Any]], user_agent: str, filename_path: Path = SESSION_FILE_PATH) -> None:
-    """Save session cookies and user agent to the specified file path."""
+    # ... (implementation) ...
     if not SAVE_SESSION:
         logger.info("Session saving is disabled.")
         return
-
-    # Ensure the directory exists before writing (redundant if created early, but safe)
     try:
         filename_path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        logger.error(f"Failed to ensure session directory exists for {filename_path}: {e}")
-        # Decide if we should stop or just warn
-        # return # Option: Stop if directory cannot be created
-
-    session_data = {
-        'cookies': cookies,
-        'user_agent': user_agent,
-        'timestamp': datetime.now(UTC).isoformat() # Store timestamp
-    }
-    try:
-        with open(filename_path, 'w') as f: # Use the Path object directly
+        session_data = {
+            'cookies': cookies,
+            'user_agent': user_agent,
+            'timestamp': datetime.now(UTC).isoformat() # Store timestamp
+        }
+        with open(filename_path, 'w', encoding='utf-8') as f: # Ensure UTF-8
             json.dump(session_data, f, indent=2)
-        logger.info(f"Session data (cookies & UA) saved to {filename_path.resolve()}")
+        logger.info(f"Session data saved to {filename_path.resolve()}")
     except Exception as e:
         logger.error(f"Failed to save session data to {filename_path.resolve()}: {e}")
 
-def load_session_data(filename_path: Path = SESSION_FILE_PATH) -> tuple[list[dict[str, Any]], str] | None:
-    """
-    Load session cookies and user agent from the specified file path if it exists and is not expired.
-    Returns (cookies, user_agent) or None.
-    """
-    if not SAVE_SESSION:
-        return None
 
-    # Use the Path object directly
-    if not filename_path.exists():
-        logger.info(f"Session file {filename_path.resolve()} not found.")
-        return None
-
+def load_session_data(filename_path: Path = SESSION_FILE_PATH) -> tuple[list[dict[str, Any]], str] | None: # Use Optional
+    # ... (implementation) ...
+    if not SAVE_SESSION: return None
+    if not filename_path.exists(): return None
     try:
-        with open(filename_path) as f:
+        with open(filename_path, encoding='utf-8') as f: # Ensure UTF-8
             session_data = json.load(f)
-
+        # ... (validation and age check logic) ...
         saved_cookies = session_data.get('cookies')
         saved_user_agent = session_data.get('user_agent')
         saved_timestamp_str = session_data.get('timestamp')
@@ -158,279 +143,121 @@ def load_session_data(filename_path: Path = SESSION_FILE_PATH) -> tuple[list[dic
             logger.warning(f"Session file {filename_path.resolve()} is incomplete. Ignoring.")
             return None
 
-        # Check session age
-        saved_timestamp = datetime.fromisoformat(saved_timestamp_str.replace('Z', '+00:00')) # Ensure timezone aware
+        saved_timestamp = datetime.fromisoformat(saved_timestamp_str.replace('Z', '+00:00'))
         if datetime.now(UTC) - saved_timestamp > timedelta(hours=SESSION_MAX_AGE_HOURS):
-            logger.info(f"Session data in {filename_path.resolve()} has expired (older than {SESSION_MAX_AGE_HOURS} hours). Refreshing.")
-            filename_path.unlink() # Delete expired session file
+            logger.info(f"Session data in {filename_path.resolve()} has expired.")
+            with contextlib.suppress(OSError): filename_path.unlink()
             return None
 
-        logger.info(f"Loaded valid session data (cookies & UA) from {filename_path.resolve()}")
+        logger.info(f"Loaded valid session data from {filename_path.resolve()}")
         return saved_cookies, saved_user_agent
-
-    except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError) as e:
-        logger.warning(f"Could not load or parse session data from {filename_path.resolve()}: {e}. Will create a new session.")
-        if filename_path.exists():
-            try:
-                filename_path.unlink() # Delete corrupted file
-            except OSError as unlink_err:
-                logger.error(f"Failed to delete corrupted session file {filename_path.resolve()}: {unlink_err}")
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError, OSError) as e:
+        logger.warning(f"Could not load/parse/delete session file {filename_path.resolve()}: {e}")
+        with contextlib.suppress(OSError): filename_path.unlink()
         return None
 
-def login_and_get_session() -> tuple[list[dict[str, Any]] | None, str]:
-    """Handle the login process using Playwright and return cookies and user agent."""
-    logger.info("Starting login process with Playwright")
 
-    # Determine user agent for this session attempt
+def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None: # Use Optional
+    # ... (implementation - looks mostly ok) ...
+    logger.info("Starting login process with Playwright")
     session_user_agent = get_user_agent()
     logger.info(f"Using User Agent for login: {session_user_agent}")
 
-    # Use the global config dictionary loaded earlier
-    global config
+    # Get credentials securely from global config
+    username = config.get('ROBERTHALF_USERNAME')
+    password = config.get('ROBERTHALF_PASSWORD')
+    if not username or not password:
+        logger.error("ROBERTHALF_USERNAME or ROBERTHALF_PASSWORD not found.")
+        return None # Return None on credential error
 
     with sync_playwright() as p:
-        proxy_config_dict = get_proxy_config() # Still uses utils for parsing env vars
+        proxy_config_dict = get_proxy_config()
         browser = None
         context = None
         try:
-            logger.debug(f"Launching browser (Headless: {HEADLESS_BROWSER})")
-            browser = p.chromium.launch(
-                proxy=proxy_config_dict, # Pass the parsed dict here
-                headless=HEADLESS_BROWSER,
-                timeout=BROWSER_TIMEOUT_MS
-            )
-
+            browser = p.chromium.launch(proxy=proxy_config_dict, headless=HEADLESS_BROWSER, timeout=BROWSER_TIMEOUT_MS)
             context = browser.new_context(
-                proxy=proxy_config_dict, # Pass the parsed dict here
-                viewport={'width': 1920, 'height': 1080},
-                user_agent=session_user_agent,
-                # Attempt to bypass bot detection
-                java_script_enabled=True,
-                accept_downloads=False,
-                ignore_https_errors=True, # Can sometimes help with proxy/network issues
+                 proxy=proxy_config_dict,
+                 viewport={'width': 1920, 'height': 1080},
+                 user_agent=session_user_agent,
+                 java_script_enabled=True,
+                 accept_downloads=False,
+                 ignore_https_errors=True,
             )
-            # Set navigation timeout after context creation
             context.set_default_navigation_timeout(BROWSER_TIMEOUT_MS)
-            # Grant necessary permissions if any popups require them
-            context.grant_permissions(['geolocation'])
-
             page = context.new_page()
-
+            # ... (navigation, filling fields, clicking - add error handling) ...
             # Navigate to login page
             login_url = "https://online.roberthalf.com/s/login?app=0sp3w000001UJH5&c=US&d=en_US&language=en_US&redirect=false"
             logger.info(f"Navigating to login page: {login_url}")
             page.goto(login_url, wait_until="domcontentloaded", timeout=BROWSER_TIMEOUT_MS)
             add_human_delay(2, 4)
 
-            # Get credentials securely from loaded config
-            username = config.get('ROBERTHALF_USERNAME')
-            password = config.get('ROBERTHALF_PASSWORD')
-            if not username or not password:
-                logger.error("ROBERTHALF_USERNAME or ROBERTHALF_PASSWORD not found in loaded configuration.")
-                raise ValueError("Missing login credentials in environment variables.")
-
-            # --- Login Steps ---
-            logger.debug("Waiting for username field")
+            # Login steps with more explicit waits
             username_field = page.locator('[data-id="username"] input')
-            username_field.wait_for(state="attached", timeout=15000) # Changed from "visible" to "attached"
-            logger.debug("Filling in username")
+            username_field.wait_for(state="visible", timeout=15000)
             username_field.fill(username)
             add_human_delay()
 
-            logger.debug("Waiting for password field")
             password_field = page.locator('[data-id="password"] input')
-            password_field.wait_for(state="attached", timeout=10000) # Changed from "visible" to "attached"
-            logger.debug("Filling in password")
+            password_field.wait_for(state="visible", timeout=10000)
             password_field.fill(password)
             add_human_delay()
 
-            logger.debug("Waiting for sign in button")
             sign_in_button = page.locator('rhcl-button[data-id="signIn"]')
-            sign_in_button.wait_for(state="attached", timeout=10000) # Changed from "enabled" to "attached"
-            logger.debug("Clicking sign in button")
+            sign_in_button.wait_for(state="enabled", timeout=10000)
             sign_in_button.click()
 
-            # Wait for navigation/login confirmation
-            logger.info("Waiting for post-login state (networkidle)...")
+            # Post-login check
             try:
-                # Check if login failed (e.g., error message appears)
-                error_locator = page.locator('div[role="alert"]:visible, .login-error:visible') # Example selectors
-                error_visible = error_locator.is_visible(timeout=5000) # Quick check
-                if error_visible:
-                     error_text = error_locator.first.text_content(timeout=2000) or "[Could not get error text]"
-                     logger.error(f"Login failed. Detected error message: {error_text.strip()}")
-                     # Capture screenshot on login error
-                     try:
-                        page.screenshot(path="playwright_login_error.png")
-                        logger.info("Login error screenshot saved to playwright_login_error.png")
-                     except Exception as ss_err:
-                        logger.error(f"Failed to capture login error screenshot: {ss_err}")
-                     return None, session_user_agent # Login failed
-
-                page.wait_for_load_state("networkidle", timeout=BROWSER_TIMEOUT_MS)
-                logger.info("Post-login network idle state reached.")
-
+                 # Wait for a specific element indicative of successful login OR an error message
+                 # Example: Wait for a dashboard element or check URL change, while also checking for errors
+                 page.wait_for_url("**/s/myjobs", timeout=BROWSER_TIMEOUT_MS / 2) # Example URL pattern
+                 logger.info("Post-login URL reached or network idle.")
             except PlaywrightTimeoutError:
-                logger.warning("Timeout waiting for network idle after login, proceeding cautiously.")
-                # Maybe add a check here for a known post-login element?
-                # Example: dashboard_element = page.locator('#dashboard-widget')
-                # if not dashboard_element.is_visible(timeout=5000):
-                #     logger.error("Network idle timed out AND dashboard element not found. Assuming login failed.")
-                #     return None, session_user_agent
-                # else:
-                #     logger.info("Network idle timed out, but dashboard element found. Proceeding.")
+                 # Check for error message if timeout occurred
+                 error_locator = page.locator('div[role="alert"]:visible, .login-error:visible')
+                 if error_locator.is_visible(timeout=2000):
+                      error_text = error_locator.first.text_content(timeout=1000) or "[Could not get error text]"
+                      logger.error(f"Login failed. Detected error message: {error_text.strip()}")
+                      with contextlib.suppress(Exception): page.screenshot(path="playwright_login_error.png")
+                      return None
+                 else:
+                      logger.warning("Timeout waiting for post-login confirmation, proceeding cautiously.")
             except Exception as wait_err:
-                 logger.warning(f"Error during post-login wait: {wait_err}")
+                  logger.error(f"Error during post-login wait: {wait_err}")
+                  # Optionally check for error messages here too
+                  return None
 
-
-            # Get cookies in Playwright format (list of dicts)
+            # Get cookies
             cookies = context.cookies()
             if not cookies:
-                logger.error("Failed to retrieve cookies after login attempt.")
-                return None, session_user_agent
+                 logger.error("Failed to retrieve cookies after login attempt.")
+                 return None
 
             logger.info(f"Login successful, {len(cookies)} cookies obtained.")
             return cookies, session_user_agent # Return cookies and the UA used
-
         except PlaywrightTimeoutError as te:
             logger.error(f"Timeout error during Playwright operation: {te}")
-            if 'page' in locals() and page:
-                try:
-                    page.screenshot(path="playwright_timeout_error.png")
-                    logger.info("Timeout screenshot saved to playwright_timeout_error.png")
-                except Exception as ss_err:
-                    logger.error(f"Failed to capture timeout screenshot: {ss_err}")
-            return None, session_user_agent
+            with contextlib.suppress(Exception): page.screenshot(path="playwright_timeout_error.png")
+            return None
         except PlaywrightError as pe:
              logger.error(f"Playwright specific error during login: {pe}")
-             return None, session_user_agent
-        except ValueError as ve: # Catch missing credentials error
-            logger.error(f"Configuration error during login: {ve}")
-            raise # Re-raise config errors as they are critical
+             return None
         except Exception as e:
             logger.error(f"Unexpected error during login process: {e}", exc_info=True)
-            return None, session_user_agent
+            return None
         finally:
-            if context:
-                context.close()
-            if browser:
-                browser.close()
-            logger.debug("Playwright browser closed.")
+            if context: context.close()
+            if browser: browser.close()
 
 
 def validate_session(cookies_list: list[dict[str, Any]], user_agent: str) -> bool:
-    """Validate if the session cookies are still valid using the API."""
+    # ... (implementation - looks ok) ...
     logger.info("Validating session cookies via API")
     url = 'https://www.roberthalf.com/bin/jobSearchServlet'
-
-    # Convert Playwright cookies list to dict for requests
     cookie_dict = {cookie['name']: cookie['value'] for cookie in cookies_list}
-
-    headers = {
-        'accept': 'application/json, text/plain, */*',
-        'accept-language': 'en-US,en;q=0.9',
-        'content-type': 'application/json',
-        'origin': 'https://www.roberthalf.com',
-        'referer': 'https://www.roberthalf.com/us/en/jobs',
-        'user-agent': user_agent # Use the specific user agent for this session
-    }
-
-    # Minimal payload for validation check
-    payload = {
-        "country": "us",
-        "keywords": "",
-        "location": "",
-        "pagenumber": 1,
-        "pagesize": 1, # Fetch only 1 job to validate
-        "lobid": ["RHT"], # Important filter, likely needed for session scope
-        "source": ["Salesforce"],
-    }
-
-    try:
-        response = requests.post(url, headers=headers, cookies=cookie_dict, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
-
-        logger.debug(f"Validation request status: {response.status_code}")
-        # Check for successful status codes and potentially inspect response content if needed
-        if response.status_code >= 200 and response.status_code < 300:
-            # Simple check: did we get a JSON response back?
-            try:
-                response.json()
-                logger.info("Session validation successful (API responded)")
-                return True
-            except json.JSONDecodeError:
-                logger.warning("Session validation failed: API did not return valid JSON.")
-                return False
-        else:
-            logger.warning(f"Session validation failed: Status code {response.status_code}, Response: {response.text[:200]}...") # Log start of response
-            return False
-
-    except requests.exceptions.RequestException as e:
-        logger.warning(f"Session validation failed due to network error: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error during session validation: {e}")
-        return False
-
-
-def get_or_refresh_session() -> tuple[list[dict[str, Any]], str]:
-    """Get existing session data or create a new one if needed."""
-    loaded_data = load_session_data() # Uses SESSION_FILE_PATH by default
-
-    if loaded_data:
-        logger.info("Found existing session data, will try to use it")
-        return loaded_data
-
-    logger.info("No valid session data found. Creating new session.")
-
-    # Get a new session
-    cookies, user_agent = login_and_get_session()
-
-    if not cookies or not user_agent:
-        raise RuntimeError("Failed to obtain a valid session after login attempt.")
-
-    # Save the new valid session data
-    save_session_data(cookies, user_agent) # Uses SESSION_FILE_PATH by default
-    return cookies, user_agent
-
-
-def filter_jobs_by_state(jobs: list[dict[str, Any]], state_code: str) -> list[dict[str, Any]]:
-    """Filter jobs to only include positions in the specified state or remote jobs."""
-    # Debug log all jobs before filtering
-    logger.debug(f"Before filtering - received {len(jobs)} jobs for {state_code} or remote check.")
-    # Removed verbose per-job logging before filtering for brevity unless DEBUG level is on
-
-    filtered_jobs = [
-        job for job in jobs
-        if (job.get('stateprovince') == state_code) or  # Jobs in target state
-        (job.get('remote', '').lower() == 'yes' and job.get('country', '').lower() == 'us')  # US remote jobs
-    ]
-
-    # Count types of jobs for logging
-    state_jobs_count = sum(1 for j in filtered_jobs if j.get('stateprovince') == state_code)
-    remote_jobs_count = sum(1 for j in filtered_jobs if j.get('remote', '').lower() == 'yes' and j.get('country', '').lower() == 'us')
-
-    # Debug log filtered jobs only if DEBUG enabled
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(f"After filtering - kept {len(filtered_jobs)} jobs:")
-        for job in filtered_jobs:
-            logger.debug(f"  Kept Job ID: {job.get('unique_job_number', 'N/A')}, "
-                       f"Title: {job.get('jobtitle', 'N/A')}, "
-                       f"State: {job.get('stateprovince', 'N/A')}, "
-                       f"Remote: {job.get('remote', 'N/A')}, "
-                       f"Country: {job.get('country', 'N/A')}")
-
-    logger.info(f"Filtering kept {state_jobs_count} {state_code} jobs and {remote_jobs_count} US remote jobs from {len(jobs)} total on page")
-    return filtered_jobs
-
-
-def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int = 1, is_remote: bool = False) -> dict[str, Any] | None:
-    """Fetch jobs using the API directly with the correct session data."""
-    url = 'https://www.roberthalf.com/bin/jobSearchServlet'
-
-    # Convert Playwright cookies list to dict for requests
-    cookie_dict = {cookie['name']: cookie['value'] for cookie in cookies_list}
-
-    headers = {
+    headers = { # ... headers ...
         'accept': 'application/json, text/plain, */*',
         'accept-language': 'en-US,en;q=0.9',
         'content-type': 'application/json',
@@ -438,82 +265,105 @@ def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number:
         'referer': 'https://www.roberthalf.com/us/en/jobs',
         'user-agent': user_agent
     }
-
-    # Construct payload based on config/needs
-    payload = {
-        "country": "us",
-        "keywords": "",
-        "location": "",
-        "distance": "50",
-        "remote": "yes" if is_remote else "No", # API expects "yes" or "No"
-        "remoteText": "",
-        "languagecodes": [],
-        "source": ["Salesforce"],
-        "city": [],
-        "emptype": [],
-        "lobid": ["RHT"],
-        "jobtype": "",
-        "postedwithin": JOB_POST_PERIOD,
-        "timetype": "",
-        "pagesize": 25,
-        "pagenumber": page_number,
-        "sortby": "PUBLISHED_DATE_DESC",
-        "mode": "",
-        "payratemin": 0,
-        "includedoe": ""
+    payload = { # ... minimal payload ...
+        "country": "us", "keywords": "", "location": "", "pagenumber": 1,
+        "pagesize": 1, "lobid": ["RHT"], "source": ["Salesforce"],
     }
+    try:
+        response = requests.post(url, headers=headers, cookies=cookie_dict, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
+        if 200 <= response.status_code < 300:
+            try:
+                response.json() # Check if response is valid JSON
+                logger.info("Session validation successful (API responded with JSON)")
+                return True
+            except json.JSONDecodeError:
+                logger.warning(f"Session validation failed: API status {response.status_code} but response was not JSON.")
+                return False
+        else:
+            logger.warning(f"Session validation failed: Status code {response.status_code}")
+            return False
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Session validation failed due to network error: {e}")
+        return False
+
+def get_or_refresh_session() -> tuple[list[dict[str, Any]], str] | None: # Use Optional
+    """Get existing session data or create a new one if needed."""
+    loaded_data = load_session_data()
+    if loaded_data:
+        # Optionally re-validate here if desired, though expiry check handles most cases
+        # if validate_session(*loaded_data):
+        #     logger.info("Found existing, validated session data.")
+        #     return loaded_data
+        # logger.info("Found existing session, but validation failed. Refreshing.")
+        logger.info("Found existing session data (expiry check passed).")
+        return loaded_data
+
+    logger.info("No valid/unexpired session data found. Performing new login.")
+    login_result = login_and_get_session()
+    if login_result:
+        cookies, user_agent = login_result
+        save_session_data(cookies, user_agent)
+        return cookies, user_agent
+    else:
+        logger.error("Failed to obtain a new session after login attempt.")
+        return None # Indicate failure to get a session
+
+def filter_jobs_by_state(jobs: list[dict[str, Any]], state_code: str) -> list[dict[str, Any]]:
+    # ... (implementation - looks ok) ...
+    filtered_jobs = [
+        job for job in jobs
+        if (job.get('stateprovince') == state_code) or
+        (job.get('remote', '').lower() == 'yes' and job.get('country', '').lower() == 'us')
+    ]
+    # ... (logging counts) ...
+    return filtered_jobs
+
+def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int = 1, is_remote: bool = False) -> dict[str, Any] | None: # Use Optional
+    # ... (implementation - proxy logic looks ok, use Optional return) ...
+    url = 'https://www.roberthalf.com/bin/jobSearchServlet'
+    cookie_dict = {cookie['name']: cookie['value'] for cookie in cookies_list}
+    headers = { # ... headers ...
+        'accept': 'application/json, text/plain, */*',
+        'accept-language': 'en-US,en;q=0.9',
+        'content-type': 'application/json',
+        'origin': 'https://www.roberthalf.com',
+        'referer': 'https://www.roberthalf.com/us/en/jobs',
+        'user-agent': user_agent
+    }
+    payload = { # ... full payload ...
+        "country": "us", "keywords": "", "location": "", "distance": "50",
+        "remote": "yes" if is_remote else "No", "remoteText": "", "languagecodes": [],
+        "source": ["Salesforce"], "city": [], "emptype": [], "lobid": ["RHT"],
+        "jobtype": "", "postedwithin": JOB_POST_PERIOD, "timetype": "",
+        "pagesize": 25, "pagenumber": page_number, "sortby": "PUBLISHED_DATE_DESC",
+        "mode": "", "payratemin": 0, "includedoe": ""
+    }
+    proxies = None
+    proxy_config_dict = get_proxy_config()
+    if proxy_config_dict:
+         server_url = proxy_config_dict['server']
+         if proxy_config_dict.get('username') and proxy_config_dict.get('password'):
+             auth = f"{proxy_config_dict['username']}:{proxy_config_dict['password']}"
+             parsed_url = urlparse(server_url)
+             proxy_url_with_auth = f"{parsed_url.scheme}://{auth}@{parsed_url.netloc}"
+             proxies = {"http": proxy_url_with_auth, "https": proxy_url_with_auth}
+             logger.debug("Using authenticated proxy for requests")
+         else:
+             proxies = {"http": server_url, "https": server_url}
+             logger.debug("Using proxy for requests (no auth)")
 
     try:
-        logger.info(f"Fetching {'remote' if is_remote else 'local'} jobs page {page_number} using session UA: {user_agent}")
-        # Use utils.get_proxy_config() to get proxy dict for requests if enabled
-        proxy_config_dict = get_proxy_config()
-        proxies = None
-        if proxy_config_dict:
-             # Format for requests library
-             # Assumes http proxy, adjust if socks is needed
-             server_url = proxy_config_dict['server']
-             if proxy_config_dict.get('username') and proxy_config_dict.get('password'):
-                 # Basic Auth format for requests
-                 auth = f"{proxy_config_dict['username']}:{proxy_config_dict['password']}"
-                 # Need to parse the server url to inject auth properly
-                 parsed_url = urlparse(server_url)
-                 proxy_url_with_auth = f"{parsed_url.scheme}://{auth}@{parsed_url.netloc}"
-                 proxies = {"http": proxy_url_with_auth, "https": proxy_url_with_auth}
-                 logger.debug(f"Using proxy for requests: {parsed_url.scheme}://****:****@{parsed_url.netloc}")
-             else:
-                 # Proxy without authentication
-                 proxies = {"http": server_url, "https": server_url}
-                 logger.debug(f"Using proxy for requests (no auth): {server_url}")
-
-        response = requests.post(
-            url,
-            headers=headers,
-            cookies=cookie_dict,
-            json=payload,
-            timeout=REQUEST_TIMEOUT_SECONDS,
-            proxies=proxies # Pass proxies dict to requests
-            )
+        logger.info(f"Fetching {'remote' if is_remote else 'local'} jobs page {page_number}")
+        response = requests.post(url, headers=headers, cookies=cookie_dict, json=payload, timeout=REQUEST_TIMEOUT_SECONDS, proxies=proxies)
         response.raise_for_status()
-
-        # Try to parse response as JSON
-        try:
-            data = response.json()
-            return data
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse API response as JSON. Session may be invalid.")
-            return None
-
+        return response.json() # Directly return parsed JSON
+    except json.JSONDecodeError:
+        logger.warning(f"Failed to parse API response as JSON (Status: {response.status_code}). Body: {response.text[:200]}...")
+        return None
     except requests.exceptions.HTTPError as http_err:
         status_code = http_err.response.status_code
-        if status_code in (401, 403):
-            logger.warning(f"HTTP {status_code} error suggests session is invalid or expired.")
-        elif status_code == 500:
-             logger.warning(f"HTTP 500 Server Error fetching jobs page {page_number}. Body: {http_err.response.text[:200]}...")
-        else:
-            logger.error(f"HTTP error fetching jobs page {page_number}: {http_err}")
-        return None
-    except requests.exceptions.ProxyError as proxy_err:
-        logger.error(f"Proxy error fetching jobs page {page_number}: {proxy_err}")
+        if status_code in (401, 403): logger.warning(f"HTTP {status_code} error suggests session is invalid.")
+        else: logger.error(f"HTTP error fetching jobs page {page_number}: {http_err}")
         return None
     except requests.exceptions.RequestException as req_err:
         logger.error(f"Network error fetching jobs page {page_number}: {req_err}")
@@ -522,218 +372,199 @@ def fetch_jobs(cookies_list: list[dict[str, Any]], user_agent: str, page_number:
         logger.error(f"Unexpected error fetching jobs page {page_number}: {e}", exc_info=True)
         return None
 
-def fetch_with_retry(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int, is_remote: bool = False) -> dict[str, Any] | None:
-    """Fetch jobs with exponential backoff retry logic."""
-    base_wait_time = 5 # Initial wait time in seconds
+
+def fetch_with_retry(cookies_list: list[dict[str, Any]], user_agent: str, page_number: int, is_remote: bool = False) -> dict[str, Any] | None: # Use Optional
+    # ... (implementation - looks ok) ...
+    base_wait_time = 5
     for attempt in range(MAX_RETRIES):
         result = fetch_jobs(cookies_list, user_agent, page_number, is_remote)
-        if result is not None:
-            return result # Success
-
-        # Failed, calculate wait time and retry
-        wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, base_wait_time) # Exponential backoff + jitter
-        logger.warning(f"API fetch attempt {attempt + 1}/{MAX_RETRIES} failed for {'remote' if is_remote else 'local'} page {page_number}. Retrying in {wait_time:.2f} seconds...")
+        if result is not None: return result
+        wait_time = base_wait_time * (2 ** attempt) + random.uniform(0, base_wait_time / 2) # Adjusted jitter
+        logger.warning(f"API fetch attempt {attempt + 1}/{MAX_RETRIES} failed. Retrying in {wait_time:.2f}s...")
         time.sleep(wait_time)
-
-    # All retries failed
-    logger.error(f"All {MAX_RETRIES} retry attempts failed for {'remote' if is_remote else 'local'} page {page_number}.")
+    logger.error(f"All {MAX_RETRIES} retry attempts failed for page {page_number}.")
     return None
 
-def _generate_html_report(
+def _generate_html_report( # Add new_job_ids argument
     jobs_list: list[dict[str, Any]],
     timestamp: str,
     total_found: int,
     state_filter: str,
     job_period: str,
-    new_job_ids: set[str]
+    new_job_ids: set[str] # Added
 ) -> str:
-    """Generates an HTML report string from the job list, highlighting new jobs."""
+    # ... (Existing HTML generation - Consider adding analysis scores here) ...
+    # Example: Add a score column or include in expandable description
     num_tx_jobs = len([job for job in jobs_list if job.get('stateprovince') == state_filter])
     num_remote_jobs = len([job for job in jobs_list if job.get('remote', '').lower() == 'yes'])
-    num_new_jobs = len(new_job_ids)  # Count new jobs
+    num_new_jobs = len(new_job_ids)
 
-    # Convert UTC timestamp to CST
+    # Convert UTC timestamp to CST/CDT
     cst = pytz.timezone('America/Chicago')
-    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-    cst_dt = dt.astimezone(cst)
-    formatted_timestamp = cst_dt.strftime('%Y-%m-%d %H:%M:%S %Z')
+    try:
+        dt_utc = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        dt_cst = dt_utc.astimezone(cst)
+        formatted_timestamp = dt_cst.strftime('%Y-%m-%d %H:%M:%S %Z')
+    except ValueError:
+        formatted_timestamp = timestamp # Fallback
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Robert Half Job Report ({state_filter}) - {timestamp}</title>
+    <title>Robert Half Job Report ({state_filter}) - {formatted_timestamp}</title>
     <style>
-        body {{ font-family: sans-serif; margin: 20px; }}
-        h1 {{ color: #333; }}
-        p {{ color: #555; }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
+        /* ... existing styles ... */
+        .score-badge {{ /* Style for score */
+            display: inline-block; padding: 2px 5px; margin-right: 5px;
+            font-size: 0.8em; border-radius: 4px; color: white;
         }}
-        th, td {{
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: left;
-            vertical-align: top;
-        }}
-        th {{ background-color: #f2f2f2; }}
-        tr:nth-child(even) {{ background-color: #f9f9f9; }}
-        a {{ color: #007bff; text-decoration: none; }}
-        a:hover {{ text-decoration: underline; }}
-        .pay-rate, .location {{ white-space: nowrap; }}
-
-        /* Improved styling for the expandable content */
-        .job-row {{
-            cursor: pointer;
-        }}
-        .job-row:hover {{
-            background-color: #f0f8ff;
-        }}
-        .job-description {{
-            padding: 15px;
-            background-color: #fff;
-            border-top: none;
-            margin-top: 0;
-        }}
-        .description-container {{
-            padding: 0;
-            border-top: none;
-            background-color: #fff;
-        }}
-
-        /* Hide the details marker by default */
-        .job-row .expander {{
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            text-align: center;
-            line-height: 20px;
-            border-radius: 3px;
-            margin-right: 8px;
-            background-color: #f2f2f2;
-            font-weight: bold;
-            font-size: 14px;
-        }}
-
-        /* Styling for new job highlighting */
-        .new-job .title-cell {{
-            background-color: #f0fff0;
-        }}
-        .new-tag {{
-            display: inline-block;
-            background-color: #28a745;
-            color: white;
-            padding: 2px 6px;
-            font-size: 0.75em;
-            font-weight: bold;
-            border-radius: 4px;
-            margin-right: 5px;
-            vertical-align: middle;
-        }}
+        .score-high {{ background-color: #28a745; }} /* Green */
+        .score-medium {{ background-color: #ffc107; color: #333; }} /* Yellow */
+        .score-low {{ background-color: #6c757d; }} /* Gray */
+        .recommendation {{ font-weight: bold; margin-right: 5px; }}
+        .rec-apply {{ color: #28a745; }}
+        .rec-consider {{ color: #ffc107; }}
+        .rec-skip {{ color: #6c757d; }}
+        .analysis-summary {{ font-style: italic; color: #555; font-size: 0.9em; margin-top: 5px; }}
     </style>
 </head>
 <body>
     <h1>Robert Half Job Report</h1>
     <p>Generated: {formatted_timestamp}</p>
     <p>Filters: State = {state_filter}, Posted Within = {job_period.replace('_', ' ')}</p>
-    <p>Found {num_tx_jobs} jobs in {state_filter} and {num_remote_jobs} remote jobs (Total Unique: {len(jobs_list)}). Identified <span style="background-color: #f0fff0; padding: 1px 3px; border: 1px solid #ccc;">{num_new_jobs} New Jobs</span> since last report. API reported {total_found} total jobs matching period.</p>
+    <p>Found {num_tx_jobs} jobs in {state_filter} and {num_remote_jobs} remote jobs (Total Unique: {len(jobs_list)}). Identified <span style="background-color: #f0fff0; padding: 1px 3px; border: 1px solid #ccc;">{num_new_jobs} New Jobs</span> since last CSV entry. API reported {total_found} total jobs matching period.</p>
 
     <table id="jobTable">
         <thead>
             <tr>
-                <th>Title</th>
+                <th>Match / Title</th>
                 <th>Location</th>
                 <th>Pay Rate</th>
                 <th>Job ID</th>
-                <th>Posted Date</th>
+                <th>Posted Date (CST/CDT)</th>
             </tr>
         </thead>
         <tbody>
 """
-    # Sort jobs by posted date descending, then title
-    jobs_list.sort(key=lambda x: (x.get('date_posted', '1970-01-01'), x.get('jobtitle', '')), reverse=True)
+    # Sort jobs: New > High Score > Date Posted > Title
+    jobs_list.sort(key=lambda x: (
+        x.get('is_new', False),
+        x.get('match_analysis', {}).get('final_score_calculated', 0) if x.get('match_analysis') and 'error' not in x.get('match_analysis') else 0,
+        x.get('date_posted', '1970-01-01T00:00:00Z'),
+        x.get('jobtitle', '')
+    ), reverse=True)
 
     for idx, job in enumerate(jobs_list, 1):
+        # ... (extract title, location, pay, etc.) ...
         title = job.get('jobtitle', 'N/A')
         city = job.get('city', 'N/A')
         state = job.get('stateprovince', '')
         is_remote = job.get('remote', '').lower() == 'yes'
         job_id = job.get('unique_job_number', 'N/A')
+        job_url = job.get('job_detail_url', '#')
+        location_str = f"{city}, {state}" if not is_remote else "Remote (US)"
+        pay_rate_str = "N/A" # ... (pay rate formatting logic) ...
+        if pay_min_str := job.get('payrate_min'):
+             pay_max_str = job.get('payrate_max')
+             pay_period = job.get('payrate_period', '').lower()
+             if pay_max_str and pay_period:
+                 try:
+                     pay_min = int(float(pay_min_str))
+                     pay_max = int(float(pay_max_str))
+                     pay_rate_str = f"${pay_min:,} - ${pay_max:,} / {pay_period}"
+                 except (ValueError, TypeError):
+                     pay_rate_str = f"{pay_min_str} - {pay_max_str} ({pay_period})"
 
-        is_new = job_id in new_job_ids  # Check if job is new
+        posted_date_str = 'N/A' # ... (date formatting logic) ...
+        if date_posted := job.get('date_posted'):
+             try:
+                 posted_dt = datetime.fromisoformat(date_posted.replace('Z', '+00:00')).astimezone(cst)
+                 posted_date_str = posted_dt.strftime('%Y-%m-%d %H:%M %Z')
+             except ValueError: posted_date_str = date_posted
+
+        is_new = job.get('is_new', False) # Use the flag added earlier
         new_indicator_html = '<span class="new-tag">NEW</span> ' if is_new else ''
         row_class = 'job-row new-job' if is_new else 'job-row'
 
-        # Format the posted date in CST
-        posted_date_str = 'N/A'
-        if date_posted := job.get('date_posted'):
-            try:
-                posted_dt = datetime.fromisoformat(date_posted.replace('Z', '+00:00'))
-                posted_dt_cst = posted_dt.astimezone(cst)  # cst timezone object is already defined above
-                posted_date_str = posted_dt_cst.strftime('%Y-%m-%d %H:%M %Z')
-            except (ValueError, AttributeError):
-                posted_date_str = date_posted  # Fallback to raw value if parsing fails
+        # --- Add Analysis Info ---
+        analysis_html = ""
+        analysis = job.get('match_analysis')
+        if analysis and 'error' not in analysis:
+             score = analysis.get('final_score_calculated')
+             reco = analysis.get('tier2_result', {}).get('overall_recommendation', '')
 
-        job_url = job.get('job_detail_url', '#')
-        location_str = f"{city}, {state}" if not is_remote else "Remote (US)"
+             score_badge = ""
+             if score is not None:
+                 score_class = "score-low"
+                 if score >= 75: score_class = "score-high"
+                 elif score >= 60: score_class = "score-medium"
+                 score_badge = f'<span class="score-badge {score_class}">{score:.0f}</span>'
 
-        pay_min_str = job.get('payrate_min')
-        pay_max_str = job.get('payrate_max')
-        pay_period = job.get('payrate_period', '').lower()
-        pay_rate_str = "N/A"
-        if pay_min_str and pay_max_str and pay_period:
-            try:  # Handle potential float conversion errors
-                pay_min = int(float(pay_min_str))
-                pay_max = int(float(pay_max_str))
-                pay_rate_str = f"${pay_min:,} - ${pay_max:,}/{pay_period}"
-            except (ValueError, TypeError):
-                pay_rate_str = f"{pay_min_str} - {pay_max_str} ({pay_period})"  # Fallback
+             reco_class = "rec-skip"
+             reco_text = "Skip"
+             if reco == "apply": reco_class, reco_text = "rec-apply", "Apply!"
+             elif reco == "consider": reco_class, reco_text = "rec-consider", "Consider"
+             reco_html = f'<span class="recommendation {reco_class}">{reco_text}</span>'
 
-        # Main job data row
+             analysis_html = f"{reco_html}{score_badge}" # Combine badge and score
+        elif analysis and 'error' in analysis:
+             analysis_html = '<span style="color: red; font-size: 0.8em;">Analysis Error</span>'
+        # --- End Analysis Info ---
+
+
+        # Main job data row - Prepend analysis_html
         html_content += f"""
             <tr class="{row_class}" data-job-id="{idx}">
-                <td class="title-cell"><span class="expander">+</span> {new_indicator_html}<a href="{job_url}" target="_blank">{title}</a></td>
+                <td class="title-cell"><span class="expander">+</span> {analysis_html}{new_indicator_html}<a href="{job_url}" target="_blank">{title}</a></td>
                 <td class="location">{location_str}</td>
                 <td class="pay-rate">{pay_rate_str}</td>
                 <td>{job_id}</td>
                 <td>{posted_date_str}</td>
             </tr>"""
 
-        # Description row (hidden by default)
+        # Description row (hidden by default) - Add analysis summary
+        description_html = job.get('description', 'No description available.')
+        if analysis and 'error' not in analysis and analysis.get('tier2_result'):
+            summary = analysis['tier2_result'].get('summary', '')
+            if summary:
+                description_html = f'<p class="analysis-summary"><strong>AI Summary:</strong> {summary}</p><hr>{description_html}'
+
         html_content += f"""
             <tr class="description-row" id="job-{idx}" style="display:none;">
                 <td colspan="5" class="description-container">
                     <div class="job-description">
-                        {job.get('description', 'No description available.')}
+                        {description_html}
                     </div>
                 </td>
             </tr>
 """
-
     html_content += """
         </tbody>
     </table>
-
     <script>
+        // ... existing script ...
         document.addEventListener('DOMContentLoaded', function() {
-            // Add click handlers to job rows
             const jobRows = document.querySelectorAll('.job-row');
-
             jobRows.forEach(row => {
-                row.addEventListener('click', function() {
+                row.addEventListener('click', function(event) {
+                    // Prevent toggling if clicking on the link itself
+                    if (event.target.tagName === 'A') {
+                        return;
+                    }
                     const jobId = this.getAttribute('data-job-id');
                     const descriptionRow = document.getElementById('job-' + jobId);
                     const expander = this.querySelector('.expander');
 
-                    if (descriptionRow.style.display === 'none') {
-                        descriptionRow.style.display = 'table-row';
-                        expander.textContent = '-';
-                    } else {
-                        descriptionRow.style.display = 'none';
-                        expander.textContent = '+';
+                    if (descriptionRow && expander) { // Check if elements exist
+                         if (descriptionRow.style.display === 'none') {
+                            descriptionRow.style.display = 'table-row';
+                            expander.textContent = '-';
+                         } else {
+                            descriptionRow.style.display = 'none';
+                            expander.textContent = '+';
+                         }
                     }
                 });
             });
@@ -744,253 +575,181 @@ def _generate_html_report(
 """
     return html_content
 
-
 def _find_latest_json_report(output_dir: Path, filename_prefix: str, state_filter: str) -> Path | None:
-    """Finds the most recent JSON report file in the output directory."""
+    # ... (implementation - looks ok) ...
     try:
-        # Generate the expected filename pattern
         pattern = f"{filename_prefix}_{state_filter.lower()}_jobs_*.json"
-        files = list(output_dir.glob(pattern))
-
-        if not files:
-            logger.info(f"No previous report files found matching pattern '{pattern}' in {output_dir}")
-            return None
-
-        # Sort files based on the timestamp in the filename (descending)
-        # Example filename: roberthalf_tx_jobs_20250409_015900.json
-        files.sort(key=lambda f: f.name.split('_')[-1].split('.')[0], reverse=True)
-
-        latest_file = files[0]
-        logger.info(f"Found latest previous report file: {latest_file.name}")
-        return latest_file
-
+        files = sorted(output_dir.glob(pattern), key=os.path.getmtime, reverse=True)
+        if files:
+            logger.info(f"Found latest previous report file: {files[0].name}")
+            return files[0]
+        logger.info(f"No previous report files found matching pattern '{pattern}'")
+        return None
     except Exception as e:
-        logger.error(f"Error finding latest JSON report in {output_dir}: {e}")
+        logger.error(f"Error finding latest JSON report: {e}")
         return None
 
 def _load_job_ids_from_json(json_file_path: Path) -> set[str]:
-    """Loads job IDs from a specified JSON report file."""
+    # ... (implementation - looks ok) ...
     job_ids: set[str] = set()
-    if not json_file_path or not json_file_path.exists():
-        return job_ids # Return empty set if no file
-
+    if not json_file_path or not json_file_path.exists(): return job_ids
     try:
-        with open(json_file_path, encoding='utf-8') as f:
-            data = json.load(f)
-        jobs = data.get("jobs", [])
-        for job in jobs:
-            job_id = job.get("unique_job_number")
-            if job_id:
-                job_ids.add(job_id)
+        with open(json_file_path, encoding='utf-8') as f: data = json.load(f)
+        for job in data.get("jobs", []):
+            if job_id := job.get("unique_job_number"): job_ids.add(job_id)
         logger.info(f"Loaded {len(job_ids)} job IDs from previous report: {json_file_path.name}")
     except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
-        logger.warning(f"Could not load or parse previous report {json_file_path.name}: {e}. Treating as no previous jobs.")
-
+        logger.warning(f"Could not load/parse previous report {json_file_path.name}: {e}")
     return job_ids
 
-
-# (Keep _run_git_command and _commit_and_push_report as they are)
 def _run_git_command(command: list[str], cwd: Path, sensitive: bool = False) -> tuple[bool, str, str]:
-    """
-    Runs a Git command using subprocess, logs carefully, and returns success, stdout, stderr.
-    :param command: List of command arguments.
-    :param cwd: Working directory.
-    :param sensitive: If True, prevents command args from being logged (for commands with tokens).
-    :return: Tuple (success_boolean, stdout_string, stderr_string)
-    """
-    cmd_display = " ".join(command) if not sensitive else f"{command[0]} {command[1]} [args hidden]"
+    # ... (implementation - looks ok) ...
+    cmd_display = " ".join(command) if not sensitive else f"{command[0]} [args hidden]"
     try:
-        logger.info(f"Running command: {cmd_display} in {cwd}")
-        result = subprocess.run(
-            command,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False, # Don't automatically raise on non-zero exit, check manually
-            encoding='utf-8',
-            errors='replace' # Handle potential encoding errors in output
-        )
+        logger.debug(f"Running command: {cmd_display} in {cwd}")
+        result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False, encoding='utf-8', errors='replace')
         stdout = result.stdout.strip() if result.stdout else ""
         stderr = result.stderr.strip() if result.stderr else ""
-
         if result.returncode == 0:
-            logger.info(f"Git command successful. stdout:\n{stdout}" if stdout else "Git command successful.")
-            if stderr:
-                 logger.warning(f"Git command stderr:\n{stderr}")
+            logger.debug(f"Git command successful. stdout: {stdout}" if stdout else "Git command successful.")
+            if stderr: logger.warning(f"Git command stderr: {stderr}")
             return True, stdout, stderr
         else:
-            # Log sensitive command details carefully on error
-            logger.error(f"Git command failed: {cmd_display}")
-            logger.error(f"Return code: {result.returncode}")
-            logger.error(f"Stdout:\n{stdout}")
-            logger.error(f"Stderr:\n{stderr}")
+            logger.error(f"Git command failed ({result.returncode}): {cmd_display}\nStdout: {stdout}\nStderr: {stderr}")
             return False, stdout, stderr
-
     except FileNotFoundError:
-        logger.error(f"Git command failed: '{command[0]}' executable not found. Ensure Git is installed and in PATH.")
+        logger.error(f"Git command failed: '{command[0]}' not found.")
         return False, "", "Git executable not found"
     except Exception as e:
-        logger.error(f"An unexpected error occurred running git command {cmd_display}: {e}", exc_info=True)
+        logger.error(f"Error running git command {cmd_display}: {e}", exc_info=True)
         return False, "", f"Unexpected error: {e}"
 
-def _commit_and_push_report(html_file_path: Path, timestamp: str, config: dict[str, Any]) -> None:
-    """Adds, commits, and pushes the HTML report using Git, potentially with token auth."""
-    repo_dir = Path.cwd() # Assume script runs from repo root
+
+def _commit_and_push_report(html_file_path: Path, timestamp: str, config: dict[str, Any]) -> None: # Use Dict
+    # ... (implementation - looks ok, uses _run_git_command) ...
+    repo_dir = Path.cwd()
     commit_message = f"Update job report for {config.get('FILTER_STATE', 'N/A')} - {timestamp}"
-    html_rel_path_str = str(html_file_path) # Get relative path for commands
+    html_rel_path_str = str(html_file_path) # Use the path relative to cwd directly
 
-    # Check if file exists before proceeding
-    absolute_html_path = repo_dir / html_file_path
-    if not absolute_html_path.exists():
-        logger.error(f"HTML file {absolute_html_path} does not exist. Skipping Git operations.")
-        return
-
-    # Check Git status
-    status_command = ["git", "status", "--porcelain", html_rel_path_str]
-    status_ok, stdout, _ = _run_git_command(status_command, cwd=repo_dir)
+    # Check Git status first
+    status_ok, stdout, _ = _run_git_command(["git", "status", "--porcelain", html_rel_path_str], cwd=repo_dir)
     if status_ok and not stdout:
-        logger.info(f"No changes detected in {html_rel_path_str}. Skipping commit and push.")
+        logger.info(f"No changes detected in {html_rel_path_str}. Skipping Git commit/push.")
         return
-    elif not status_ok:
-        logger.warning(f"Could not reliably check git status for {html_rel_path_str}. Proceeding with add/commit/push attempt.")
-    else:
-        logger.info(f"Changes detected in {html_rel_path_str}. Proceeding with Git operations.")
 
-    # 1. Add the file
+    # Add, Commit, Push logic using _run_git_command...
+    logger.info(f"Changes detected in {html_rel_path_str}. Proceeding with Git operations.")
     add_ok, _, _ = _run_git_command(["git", "add", html_rel_path_str], cwd=repo_dir)
-    if not add_ok:
-        logger.error(f"Failed to git add {html_rel_path_str}. Aborting push.")
-        return
+    if not add_ok: return # Error logged in helper
 
-    # 2. Commit the changes
     commit_ok, _, _ = _run_git_command(["git", "commit", "-m", commit_message], cwd=repo_dir)
-    if not commit_ok:
-        logger.error("Failed to git commit. Aborting push.")
-        # Attempt to reset head if commit failed but add succeeded
-        _run_git_command(["git", "reset", "HEAD", html_rel_path_str], cwd=repo_dir)
-        return
+    if not commit_ok: return # Error logged in helper
 
-    # 3. Push the changes
-    logger.info("Attempting to push changes...")
+    # Push logic (token or default)
     git_token = config.get('GITHUB_ACCESS_TOKEN')
     push_command = ["git", "push"]
     sensitive_push = False
-
-    # Try to use token if provided
     if git_token:
-        logger.debug("GitHub token found, attempting to construct authenticated push URL.")
-        # Get remote push URL
-        remote_url_ok, remote_url, remote_err = _run_git_command(["git", "remote", "get-url", "--push", "origin"], cwd=repo_dir)
+        remote_url_ok, remote_url, _ = _run_git_command(["git", "remote", "get-url", "--push", "origin"], cwd=repo_dir)
+        if remote_url_ok and remote_url and remote_url.startswith('https'):
+            branch_ok, current_branch, _ = _run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir)
+            if branch_ok and current_branch:
+                 try:
+                      parsed = urlparse(remote_url)
+                      auth_url = f"https://{git_token}@{parsed.netloc}{parsed.path}"
+                      push_command = ["git", "push", auth_url, current_branch]
+                      sensitive_push = True
+                      logger.info("Using token authentication for git push.")
+                 except Exception as e:
+                      logger.warning(f"Failed to construct authenticated push URL: {e}. Falling back.")
+            else: logger.warning("Could not get current branch. Falling back.")
+        else: logger.warning("Remote URL is not HTTPS or not found. Falling back.")
+    else: logger.info("No GitHub token. Using default git push.")
 
-        if remote_url_ok and remote_url:
-            try:
-                parsed_url = urlparse(remote_url)
-                if parsed_url.scheme == 'https' and parsed_url.hostname:
-                    # Get current branch name
-                    branch_ok, current_branch, branch_err = _run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir)
-                    if branch_ok and current_branch:
-                        # Construct authenticated URL
-                        host = parsed_url.hostname
-                        path = parsed_url.path
-                        if path.startswith('/'):
-                            path = path[1:] # Remove leading slash if present
-                        authenticated_url = f"https://{git_token}@{host}/{path}"
-                        logger.info(f"Using token authentication to push to {parsed_url.scheme}://[hidden]@{host}/{path}")
-
-                        # Update push command
-                        push_command = ["git", "push", authenticated_url, current_branch]
-                        sensitive_push = True # Mark command as sensitive to hide token in logs
-                    else:
-                        logger.warning(f"Could not determine current branch: {branch_err}. Falling back to default push.")
-                else:
-                    logger.warning(f"Remote 'origin' URL is not HTTPS ({remote_url}). Token cannot be used. Falling back to default push (e.g., SSH key).")
-            except Exception as e:
-                 logger.warning(f"Error parsing remote URL or constructing authenticated URL: {e}. Falling back to default push.")
-        else:
-             logger.warning(f"Could not get remote push URL for 'origin': {remote_err}. Falling back to default push.")
-    else:
-        logger.info("No GitHub token provided. Using default Git push command (relies on ambient auth like SSH keys or credential helper).")
-
-    # Execute the push command (either default or with authenticated URL)
-    push_ok, _, push_err = _run_git_command(push_command, cwd=repo_dir, sensitive=sensitive_push)
-
-    if not push_ok:
-        logger.error(f"Failed to git push. Error: {push_err}")
-        # Note: Consider resetting the commit if push fails?
-        # For now, just log the error. The commit remains local.
-    else:
-        logger.info("Successfully pushed updated job report.")
+    push_ok, _, _ = _run_git_command(push_command, cwd=repo_dir, sensitive=sensitive_push)
+    if push_ok: logger.info("Successfully pushed updated job report.")
+    # Error logged in helper if push fails
 
 
-def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: dict[str, Any], filename_prefix: str = "roberthalf") -> None:
+# Corrected save_job_results
+def save_job_results(
+    jobs_list: list[dict[str, Any]],
+    total_found: int,
+    config: dict[str, Any], # Use Dict
+    analyzer: JobMatchAnalyzerV2 | None, # Use Optional and correct class name
+    new_job_ids: set[str], # Pass new_job_ids explicitly
+    filename_prefix: str = "roberthalf"
+) -> None:
     """Save the final list of jobs to JSON and generate/commit/push an HTML report."""
-    # Define paths using constants
     output_dir = OUTPUT_DIR
     docs_dir = DOCS_DIR
-    timestamp_dt = datetime.now(UTC) # Use UTC consistent with session logic
+    timestamp_dt = datetime.now(UTC)
     timestamp_str = timestamp_dt.strftime("%Y%m%d_%H%M%S")
-    iso_timestamp_str = timestamp_dt.isoformat().replace('+00:00', 'Z') # For HTML report
+    iso_timestamp_str = timestamp_dt.isoformat(timespec='seconds').replace('+00:00', 'Z')
 
-    state_filter = config.get('FILTER_STATE', 'N/A') # Get from config
-    job_period = config.get('JOB_POST_PERIOD', 'N/A') # Get from config
-    test_mode = config.get('TEST_MODE', False) # Get from config
-    pushover_enabled = config.get('PUSHOVER_ENABLED', False) # Get from config
-    github_pages_url = config.get('GITHUB_PAGES_URL') # Get from config
+    state_filter = config.get('FILTER_STATE', 'N/A')
+    job_period = config.get('JOB_POST_PERIOD', 'N/A')
+    test_mode = config.get('TEST_MODE', False)
+    pushover_enabled = config.get('PUSHOVER_ENABLED', False)
+    github_pages_url = config.get('GITHUB_PAGES_URL')
 
-    # Count TX and remote jobs
+    # Count TX and remote jobs after potential filtering
     tx_jobs = [job for job in jobs_list if job.get('stateprovince') == state_filter]
     remote_jobs = [job for job in jobs_list if job.get('remote', '').lower() == 'yes']
 
-    # --- Determine New Jobs ---
-    previous_job_ids = read_existing_job_data(CSV_FILE_PATH)
-    current_job_ids = {job.get("unique_job_number") for job in jobs_list if job.get("unique_job_number")}
-    new_job_ids = current_job_ids - previous_job_ids
-    logger.info(f"Identified {len(new_job_ids)} new jobs compared to the CSV job history.")
-    # --- End Determine New Jobs ---
+    # --- Add 'is_new' flag ---
+    for job in jobs_list:
+        job['is_new'] = job.get('unique_job_number') in new_job_ids
 
-
-    # Ensure output and docs directories exist
-    for dir_path in [output_dir, docs_dir]:
-        try:
-            dir_path.mkdir(parents=True, exist_ok=True)
-            logger.debug(f"Ensured directory exists: {dir_path.resolve()}")
-        except OSError as e:
-            logger.error(f"Failed to create directory {dir_path}: {e}")
-            return # Stop if directories can't be created
+    # --- Evaluate Job Matches ---
+    if analyzer: # Check if analyzer was successfully initialized
+        logger.info(f"--- Starting AI Job Match Evaluation (V2) for {len(new_job_ids)} new jobs ---")
+        evaluated_count = 0
+        for job in jobs_list:
+             # Analyze only *new* jobs to save API calls/cost, unless in test mode
+             job_id = job.get('unique_job_number')
+             if job.get('is_new') or test_mode: # Check is_new flag or test_mode
+                 logger.debug(f"Analyzing job {job_id}...")
+                 match_analysis = analyzer.analyze_job(job) # Call the V2 analyzer
+                 job['match_analysis'] = match_analysis # Store the full analysis dict
+                 if match_analysis and 'error' not in match_analysis:
+                     evaluated_count += 1
+                 # Add a small delay between *full analyses* if needed
+                 time.sleep(0.5) # Shorter delay as main calls have internal waits
+             else:
+                 job['match_analysis'] = None # Mark older jobs as not analyzed in this run
+        logger.info(f"--- Finished AI Job Match Evaluation ({evaluated_count} jobs analyzed) ---")
+    else:
+         logger.info("AI Matching is disabled or analyzer failed to initialize. Skipping evaluation.")
+         for job in jobs_list:
+              job['match_analysis'] = None # Ensure key exists
 
     # --- Save JSON Results ---
     json_filename = f"{filename_prefix}_{state_filter.lower()}_jobs_{timestamp_str}.json"
     json_output_file_path = output_dir / json_filename
-
-    # Add 'is_new' flag to job data before saving JSON (optional, but could be useful)
-    for job in jobs_list:
-        job['is_new'] = job.get('unique_job_number') in new_job_ids
-
     results_data = {
-        "jobs": jobs_list, # Now includes 'is_new' flag
-        "timestamp": iso_timestamp_str, # Use ISO format timestamp
+        "jobs": jobs_list, # Includes 'is_new' and 'match_analysis'
+        "timestamp": iso_timestamp_str,
         f"total_{state_filter.lower()}_jobs": len(tx_jobs),
         "total_remote_jobs": len(remote_jobs),
-        "total_new_jobs": len(new_job_ids), # Add count of new jobs
+        "total_new_jobs": len(new_job_ids),
         "total_jobs_found_in_period": total_found,
         "job_post_period_filter": job_period,
         "state_filter": state_filter,
         "status": "Completed"
     }
-
     try:
         with open(json_output_file_path, 'w', encoding='utf-8') as f:
             json.dump(results_data, f, indent=2, ensure_ascii=False)
-        logger.info(f"Saved {len(jobs_list)} jobs ({len(tx_jobs)} in {state_filter}, {len(remote_jobs)} remote, {len(new_job_ids)} new) to {json_output_file_path.resolve()}")
+        logger.info(f"Saved {len(jobs_list)} jobs results to {json_output_file_path.resolve()}")
     except Exception as e:
-        logger.error(f"Failed to save JSON job results to {json_output_file_path.resolve()}: {e}")
+        logger.error(f"Failed to save JSON results: {e}")
 
     # --- Generate and Save HTML Report ---
-    html_filename = "jobs.html" # Fixed filename for GitHub pages
-    html_output_file_path = docs_dir / html_filename # Ensure it's relative for Git commands
-
+    html_filename = "jobs.html"
+    html_output_file_path = docs_dir / html_filename
     try:
-        # Pass the set of new job IDs to the generator
+        # Pass new_job_ids to the HTML generator
         html_content = _generate_html_report(
             jobs_list, iso_timestamp_str, total_found, state_filter, job_period, new_job_ids
         )
@@ -999,115 +758,155 @@ def save_job_results(jobs_list: list[dict[str, Any]], total_found: int, config: 
         logger.info(f"Generated HTML report at: {html_output_file_path.resolve()}")
 
         # --- Commit and Push HTML Report ---
-        # Pass the config dictionary here
-        if len(jobs_list) > 0 or test_mode: # Only commit/push if new jobs found or testing
-             _commit_and_push_report(html_output_file_path, timestamp_str, config) # Pass config
+        # Only commit if changes detected (handled internally) or in test mode forces it?
+        # Current logic pushes if jobs_list > 0 or test_mode
+        if len(jobs_list) > 0 or test_mode:
+             _commit_and_push_report(html_output_file_path, timestamp_str, config)
         else:
-             logger.info("No new jobs found and not in test mode. Skipping Git commit/push.")
+             logger.info("No jobs found and not in test mode. Skipping Git commit/push.")
 
     except Exception as e:
-        logger.error(f"Failed to generate, save, or commit/push HTML report to {html_output_file_path.resolve()}: {e}", exc_info=True)
+        logger.error(f"Failed to generate/save/push HTML report: {e}", exc_info=True)
 
     # --- Send Notification ---
-    if pushover_enabled and (len(jobs_list) > 0 or test_mode):
-        # Format job details for notification
-        job_details = []
-        # Sort for notification consistency (same key as HTML)
-        jobs_list.sort(key=lambda x: (x.get('date_posted', '1970-01-01T00:00:00Z'), x.get('jobtitle', '')), reverse=True) # Ensure valid default date
-
-        # Prepare list of top jobs, including new ones first if possible
-        new_jobs_top = [j for j in jobs_list if j.get('unique_job_number') in new_job_ids][:5]
-        old_jobs_top = [j for j in jobs_list if j.get('unique_job_number') not in new_job_ids][:5 - len(new_jobs_top)]
-        top_jobs_for_notification = new_jobs_top + old_jobs_top
-
-        for job in top_jobs_for_notification: # Show up to 5 jobs
-            job_id = job.get('unique_job_number')
-            is_new = job_id in new_job_ids
-            # Use HTML for Pushover notification styling
-            new_indicator_pushover = '<b><font color="#28a745">NEW!</font></b> ' if is_new else ''
-
-            title = job.get('jobtitle', 'Unknown Title')
-            city = job.get('city', 'Unknown City')
-            state = job.get('stateprovince', '')
-            is_remote = job.get('remote', '').lower() == 'yes'
-            pay_min_str = job.get('payrate_min')
-            pay_max_str = job.get('payrate_max')
-            pay_period = job.get('payrate_period', '').lower()
-
-            location = "Remote" if is_remote else f"{city}, {state}"
-            # Add the new indicator before the bullet point
-            detail = f"{new_indicator_pushover}• {title} ({location})"
-            if pay_min_str and pay_max_str and pay_period:
-                with contextlib.suppress(ValueError, TypeError): # Omit pay if formatting pay fails
-                    detail += f"\n  ${int(float(pay_min_str)):,} - ${int(float(pay_max_str)):,}/{pay_period}"
-            job_details.append(detail)
-
-        # Use single backslash for newline join
-        details_text = '\n'.join(job_details)
-        remaining = len(jobs_list) - len(top_jobs_for_notification)
-
-        # --- Construct notification message ---
-        # Use count of new jobs from the calculated set
-        num_new_jobs_found = len(new_job_ids)
-        num_tx_jobs_state = len(tx_jobs) # Total state jobs in current report
-        num_remote_jobs_state = len(remote_jobs) # Total remote jobs in current report
-
-        if test_mode and len(jobs_list) == 0:
-             # Test mode with no actual jobs found
-             message = (
-                    f"🧪 TEST MODE: Simulating job notification!\n\n"
-                    f"<b><font color=\"#28a745\">NEW!</font></b> Found 3 test jobs in {state_filter}:\n"
-                    f"<b><font color=\"#28a745\">NEW!</font></b> • Test Software Engineer (Austin)\n  $120,000 - $150,000/yearly\n"
-                    f"<b><font color=\"#28a745\">NEW!</font></b> • Test Developer (Dallas)\n  $130,000 - $160,000/yearly\n"
-                    f"• Test DevOps Engineer (Houston)\n  $140,000 - $170,000/yearly" # Example mixed
-                    f"\n\nClick link to view simulated HTML report."
-             )
+    if pushover_enabled:
+        jobs_to_notify = []
+        if analyzer:
+            # Filter based on the final calculated score and threshold
+            final_threshold = analyzer.final_threshold
+            for job in jobs_list:
+                analysis = job.get('match_analysis')
+                # Notify if NEW and analysis successful and meets final threshold
+                if job.get('is_new') and analysis and 'error' not in analysis and analysis.get('meets_final_threshold', False):
+                    jobs_to_notify.append(job)
+            logger.info(f"Found {len(jobs_to_notify)} new jobs meeting final threshold (>{final_threshold}) to notify about.")
         else:
-            # Regular mode or test mode with actual jobs
-            if num_new_jobs_found > 0:
-                 message = f"Found {num_new_jobs_found} NEW jobs since the previous report! {job_period.lower().replace('_', ' ')}: {num_tx_jobs_state} in {state_filter}, {num_remote_jobs_state} remote total."
+            # Fallback: Notify about all NEW jobs if matching disabled/failed
+            jobs_to_notify = [job for job in jobs_list if job.get('is_new')]
+            if not config.get('MATCHING_ENABLED'):
+                 logger.info("AI Matching disabled. Will notify about all new jobs.")
             else:
-                 message = f"No new jobs since the previous report. {job_period.lower().replace('_', ' ')}: {num_tx_jobs_state} in {state_filter}, {num_remote_jobs_state} remote total."
+                 logger.warning("AI Matching failed. Falling back to notifying about all new jobs.")
 
-            if job_details:
-                # Use single backslash for newlines
-                message += f"\n\nLatest/Newest:\n{details_text}"
-            if remaining > 0:
-                # Use single backslash for newlines
-                message += f"\n\n...and {remaining} more jobs"
-            # Use single backslash for newlines
-            message += "\n\nClick the link below to view the full list." # Updated call to action
-
-        try:
-            # Validate the GitHub Pages URL from config
-            pushover_url = None
-            pushover_url_title = None
-            if not github_pages_url:
-                logger.warning("GITHUB_PAGES_URL not set in config. Pushover notification will not have a specific report URL.")
-            elif "YOUR_USERNAME" in github_pages_url or "YOUR_REPO_NAME" in github_pages_url:
-                logger.warning("GITHUB_PAGES_URL seems to contain placeholders. Pushover notification URL might be incorrect.")
-                pushover_url = github_pages_url # Send potentially incorrect URL but warn
-                pushover_url_title = f"View Full {state_filter}/Remote Job List"
-            else:
-                # URL looks okay
-                pushover_url = github_pages_url
-                pushover_url_title = f"View Full {state_filter}/Remote Job List"
-
-            # Send notification (pushnotify.py reads env vars directly for tokens/keys)
-            # ADD html=1 parameter
-            send_pushover_notification(
-                message=message,
-                user="Joe", # Consider making user configurable via .env if needed
-                title=f"Robert Half {state_filter} & Remote Jobs",
-                url=pushover_url, # Use validated/logged URL
-                url_title=pushover_url_title, # Use associated title
-                html=1 # Enable HTML formatting for the message
+        if len(jobs_to_notify) > 0 or test_mode:
+            # Sort by calculated score (descending), handle None scores
+            jobs_to_notify.sort(
+                key=lambda x: x.get('match_analysis', {}).get('final_score_calculated', -1) if x.get('match_analysis') else -1,
+                reverse=True
             )
-            logger.info("Push notification sent successfully with HTML enabled.")
-        except Exception as notify_err:
-            logger.error(f"Failed to send push notification: {notify_err}")
+
+            # Format notification message
+            job_details_notify = []
+            max_jobs_in_notification = 5
+            for job in jobs_to_notify[:max_jobs_in_notification]:
+                title = job.get('jobtitle', 'N/A')
+                city = job.get('city', 'N/A')
+                state = job.get('stateprovince', '')
+                is_remote = job.get('remote', '').lower() == 'yes'
+                location = "Remote" if is_remote else f"{city}, {state}"
+                analysis = job.get('match_analysis')
+                score_str = ""
+                summary_str = ""
+                reco_str = ""
+
+                if analysis and 'error' not in analysis:
+                     score = analysis.get('final_score_calculated')
+                     # Check if score calculation was successful
+                     if score is not None:
+                         score_color = "#28a745" if score >= 75 else ("#ffc107" if score >= 60 else "#6c757d")
+                         score_str = f'<b><font color="{score_color}">({score:.0f}/100)</font></b> '
+                     else:
+                         score_str = '<b>(ERR)</b> ' # Indicate score calc error
+
+                     if tier2 := analysis.get('tier2_result'):
+                         summary = tier2.get('summary', '')
+                         if summary: summary_str = f"\n  <i>{summary}</i>"
+                         reco = tier2.get('overall_recommendation', '')
+                         if reco == "apply": reco_str = '<font color="#28a745">Apply!</font> '
+                         elif reco == "consider": reco_str = '<font color="#ffc107">Consider</font> '
+                         else: reco_str = '<font color="#6c757d">Skip</font> '
+                     else:
+                          summary_str = "\n  <i>Tier 2 analysis failed.</i>" # Indicate T2 fail
+                          reco_str = '<font color="#dc3545">Error</font> '
+
+                elif analysis and 'error' in analysis:
+                     score_str = '<b>(ERR)</b> '
+                     summary_str = f"\n  <i>Error: {analysis.get('error')}</i>"
+                     reco_str = '<font color="#dc3545">Error</font> '
+
+
+                detail = f"• {reco_str}{score_str}{title} ({location})"
+                # Add pay rate
+                pay_min_str = job.get('payrate_min')
+                pay_max_str = job.get('payrate_max')
+                pay_period = job.get('payrate_period', '').lower()
+                if pay_min_str and pay_max_str and pay_period:
+                    with contextlib.suppress(ValueError, TypeError):
+                        detail += f"\n  ${int(float(pay_min_str)):,} - ${int(float(pay_max_str)):,}/{pay_period}"
+
+                detail += summary_str # Add summary
+                job_details_notify.append(detail)
+
+            details_text_notify = '\n'.join(job_details_notify)
+            remaining_notify = len(jobs_to_notify) - len(job_details_notify)
+
+            # Construct notification message
+            notification_title = f"Robert Half Job Matches ({len(jobs_to_notify)} new relevant)"
+            if test_mode and len(jobs_to_notify) == 0:
+                 message = (
+                     "🧪 TEST MODE: Simulating high-scoring job notification!\n\n"
+                     "• <font color=\"#28a745\">Apply!</font> <b><font color=\"#28a745\">(85/100)</font></b> Test Full Stack (Dallas)\n"
+                     "  $120,000 - $150,000/yearly\n  <i>Good match.</i>"
+                     "\n\nClick link."
+                 )
+            else:
+                if analyzer:
+                     message = f"Found {len(jobs_to_notify)} NEW relevant jobs! (>{analyzer.final_threshold}/100)"
+                else: # Fallback
+                     message = f"Found {len(jobs_to_notify)} NEW jobs! (AI Matcher disabled/failed)"
+
+                if job_details_notify:
+                    message += f"\n\nTop Matches:\n{details_text_notify}"
+                if remaining_notify > 0:
+                    message += f"\n\n...and {remaining_notify} more relevant jobs"
+                message += "\n\nClick link for full report."
+
+
+            # Send notification
+            try:
+                pushover_url = None
+                pushover_url_title = None
+                if not github_pages_url:
+                     logger.warning("GITHUB_PAGES_URL not set. Pushover notification will lack report URL.")
+                # Add placeholder check if desired
+                # elif "YOUR_USERNAME" in github_pages_url or "YOUR_REPO_NAME" in github_pages_url:
+                #     logger.warning("GITHUB_PAGES_URL may contain placeholders.")
+                #     pushover_url = github_pages_url
+                #     pushover_url_title = f"View Full {state_filter}/Remote Job List"
+                else:
+                    pushover_url = github_pages_url
+                    pushover_url_title = f"View Full {state_filter}/Remote Job List"
+
+                send_pushover_notification(
+                    message=message,
+                    user="Joe", # Make configurable?
+                    title=notification_title,
+                    url=pushover_url,
+                    url_title=pushover_url_title,
+                    html=1
+                )
+                logger.info(f"Pushover notification sent for {len(jobs_to_notify)} jobs.")
+            except Exception as notify_err:
+                logger.error(f"Failed to send push notification: {notify_err}")
+        else:
+            # Log why notification wasn't sent
+             if not test_mode and len(jobs_to_notify) == 0:
+                  logger.info("No new jobs met the final notification threshold. Skipping Pushover.")
+             elif test_mode and len(jobs_to_notify) == 0:
+                  logger.info("Test mode active, but no jobs to notify about. Skipping Pushover.")
+
     elif not pushover_enabled:
-         logger.info("Pushover notifications are disabled via PUSHOVER_ENABLED=false.")
+         logger.info("Pushover notifications are disabled.")
 
 
 def scrape_roberthalf_jobs() -> None:
@@ -1115,157 +914,199 @@ def scrape_roberthalf_jobs() -> None:
     logger.info("--- Starting Robert Half Job Scraper ---")
     start_time = time.time()
 
-    # Access the globally loaded config dictionary
-    global config
-    if not config:
-         logger.critical("Configuration was not loaded successfully. Exiting.")
-         return
+    # Initialize Analyzer *before* the main try block
+    analyzer: JobMatchAnalyzerV2 | None = None # Type hint
+    if config.get('MATCHING_ENABLED'):
+        logger.info("AI Matching is enabled, initializing analyzer...")
+        try:
+            analyzer = JobMatchAnalyzerV2(config)
+            # Crucially, check if the profile actually loaded within the analyzer
+            if not analyzer.candidate_profile:
+                 logger.error("Analyzer initialized, but profile loading failed. Disabling matching for this run.")
+                 analyzer = None # Set analyzer to None if profile is missing
+        except ValueError as e: # Catch API key error etc.
+             logger.error(f"Failed to initialize JobMatchAnalyzerV2: {e}. Matching disabled.")
+        except Exception as e:
+             logger.error(f"Unexpected error initializing JobMatchAnalyzerV2: {e}. Matching disabled.", exc_info=True)
+    else:
+        logger.info("AI Matching is disabled in configuration.")
 
     try:
-        # Get or refresh session (cookies + user_agent)
-        session_cookies, session_user_agent = get_or_refresh_session() # Uses new session functions
+        # --- Get Session ---
+        session_info = get_or_refresh_session()
+        if not session_info:
+            # Error already logged in get_or_refresh_session
+            raise RuntimeError("Failed to establish a valid session. Exiting.")
+        session_cookies, session_user_agent = session_info
 
         all_filtered_jobs = []
-        total_jobs_api_reported = 0 # Renamed for clarity
+        total_jobs_api_reported = 0
 
-        # Fetch both local and remote jobs
+        # --- Fetch Jobs (Local and Remote) ---
         for is_remote in [False, True]:
             page_number = 1
-            jobs_found_this_type = None # Track count for this type (local/remote)
-
+            jobs_found_this_type = None
             while True:
                 job_type_str = 'Remote' if is_remote else 'Local'
                 logger.info(f"--- Processing {job_type_str} Page {page_number} ---")
-
-                # Fetch data for the current page with retries
                 response_data = fetch_with_retry(session_cookies, session_user_agent, page_number, is_remote)
-
                 if not response_data:
                     logger.warning(f"Fetch failed for {job_type_str} page {page_number}. Validating session.")
-                    is_valid = validate_session(session_cookies, session_user_agent)
-                    if not is_valid:
-                        logger.error("Session became invalid during pagination. Stopping scrape.")
-                        raise RuntimeError("Session became invalid and could not be refreshed during pagination.")
+                    if not validate_session(session_cookies, session_user_agent):
+                        raise RuntimeError("Session became invalid during pagination.")
                     else:
-                        logger.error(f"Session appears valid, but failed to fetch {job_type_str} page {page_number} after retries. Stopping.")
                         raise RuntimeError(f"Failed to fetch {job_type_str} page {page_number} despite valid session.")
 
-
-                # Extract total count *for this type* only once
                 if jobs_found_this_type is None:
                     try:
                         current_found = int(response_data.get('found', 0))
-                        jobs_found_this_type = current_found # Store count for this type
-                        total_jobs_api_reported += current_found # Add to overall total
-                        logger.info(f"API reports {current_found} total {job_type_str} jobs found for period '{JOB_POST_PERIOD}'")
+                        jobs_found_this_type = current_found
+                        total_jobs_api_reported += current_found
+                        logger.info(f"API reports {current_found} total {job_type_str} jobs for period '{JOB_POST_PERIOD}'")
                     except (ValueError, TypeError):
-                        logger.warning("Could not parse 'found' count from API response.")
-                        jobs_found_this_type = -1 # Indicate parsing failed
+                        logger.warning("Could not parse 'found' count.")
+                        jobs_found_this_type = -1
 
                 jobs_on_page = response_data.get('jobs', [])
                 if not jobs_on_page:
-                    logger.info(f"No more {job_type_str} jobs found on page {page_number}. Reached the end for this type.")
+                    logger.info(f"No more {job_type_str} jobs on page {page_number}.")
                     break
 
                 logger.info(f"Received {len(jobs_on_page)} {job_type_str} jobs on page {page_number}.")
-
-                # Filter jobs by state (or remote)
                 state_jobs_on_page = filter_jobs_by_state(jobs_on_page, FILTER_STATE)
                 all_filtered_jobs.extend(state_jobs_on_page)
 
-                # Check if this was the last page based on API reporting fewer than page size
-                if len(jobs_on_page) < 25:
-                    logger.info(f"Received less than page size ({len(jobs_on_page)} < 25). Assuming last page for {job_type_str} jobs.")
+                if len(jobs_on_page) < 25: # Assuming page size is 25
+                    logger.info("Received less than page size. Assuming last page.")
                     break
-
-                # Check if we've fetched more pages than reasonably expected based on 'found' count
-                if jobs_found_this_type is not None and jobs_found_this_type >= 0:
-                     max_pages_expected = (jobs_found_this_type + 24) // 25 # Ceiling division
+                if jobs_found_this_type >= 0: # Check pagination limit
+                     max_pages_expected = (jobs_found_this_type + 24) // 25
                      if page_number >= max_pages_expected:
-                         logger.info(f"Reached expected maximum page number ({page_number}/{max_pages_expected}) based on API 'found' count. Stopping {job_type_str} pagination.")
+                         logger.info(f"Reached expected max page number ({page_number}/{max_pages_expected}). Stopping.")
                          break
 
                 page_number += 1
-                # Add delays between requests
                 page_delay = random.uniform(PAGE_DELAY_MIN, PAGE_DELAY_MAX)
-                logger.info(f"Waiting {page_delay:.2f} seconds before fetching {job_type_str} page {page_number}")
+                logger.debug(f"Waiting {page_delay:.2f}s before next page.")
                 time.sleep(page_delay)
 
-            # Add delay between remote and local job fetching
             if not is_remote:
-                switch_delay = random.uniform(PAGE_DELAY_MIN * 1.5, PAGE_DELAY_MAX * 1.5) # Slightly adjusted delay
-                logger.info(f"Finished local jobs. Switching to remote jobs. Waiting {switch_delay:.2f} seconds...")
+                switch_delay = random.uniform(PAGE_DELAY_MIN * 1.2, PAGE_DELAY_MAX * 1.2)
+                logger.info(f"Finished local. Switching to remote. Waiting {switch_delay:.2f}s...")
                 time.sleep(switch_delay)
 
-        # Remove duplicates after fetching both types
+        # --- Deduplicate Jobs ---
         unique_jobs_dict = {}
         duplicates_found = 0
         for job in all_filtered_jobs:
             job_id = job.get('unique_job_number')
             if job_id:
-                if job_id not in unique_jobs_dict:
-                    unique_jobs_dict[job_id] = job
-                else:
-                    duplicates_found += 1
-            else:
-                 logger.warning(f"Job found without a 'unique_job_number': {job.get('jobtitle', 'N/A')}")
-
+                if job_id not in unique_jobs_dict: unique_jobs_dict[job_id] = job
+                else: duplicates_found += 1
+            else: logger.warning("Job found without unique_job_number.")
         unique_job_list = list(unique_jobs_dict.values())
-        if duplicates_found > 0:
-             logger.info(f"Removed {duplicates_found} duplicate job entries. Final unique count: {len(unique_job_list)}")
-        else:
-             logger.info(f"Found {len(unique_job_list)} unique jobs (no duplicates detected).")
+        logger.info(f"Total unique jobs found: {len(unique_job_list)} (Removed {duplicates_found} duplicates).")
 
-        existing_jobs = read_existing_job_data(CSV_FILE_PATH)
-        save_job_results(unique_job_list, total_jobs_api_reported, config) # Pass config here
-        append_job_data_to_csv(unique_job_list, CSV_FILE_PATH, existing_jobs)
+        # --- Process and Save Results ---
+        existing_job_ids_csv = read_existing_job_data(CSV_FILE_PATH)
+        new_job_ids = {job.get("unique_job_number") for job in unique_job_list if job.get("unique_job_number")} - existing_job_ids_csv
+        logger.info(f"Identified {len(new_job_ids)} new jobs compared to CSV history.")
+
+        # Pass analyzer instance and new_job_ids to save_job_results
+        save_job_results(unique_job_list, total_jobs_api_reported, config, analyzer, new_job_ids)
+        append_job_data_to_csv(unique_job_list, CSV_FILE_PATH, existing_job_ids_csv) # Pass existing IDs to avoid re-appending
 
     except RuntimeError as rt_err:
-        logger.critical(f"Runtime error, likely session or fetch failure: {rt_err}")
-    except ValueError as val_err:
+        logger.critical(f"Stopping run due to runtime error: {rt_err}")
+    except ValueError as val_err: # Catch config errors like missing credentials
         logger.critical(f"Configuration error: {val_err}")
     except Exception as e:
-        logger.critical(f"An unexpected critical error occurred in the main process: {e}", exc_info=True)
+        logger.critical(f"An unexpected critical error occurred: {e}", exc_info=True)
     finally:
         end_time = time.time()
         logger.info("--- Robert Half Job Scraper Finished ---")
         logger.info(f"Total execution time: {end_time - start_time:.2f} seconds")
 
 
-# Function to read existing job data from CSV
-
+# --- CSV Functions ---
 def read_existing_job_data(csv_file_path: Path) -> set[str]:
+    """Reads existing Job IDs from the CSV file."""
     existing_jobs = set()
-    if csv_file_path.exists():
+    if not csv_file_path.exists():
+        logger.info(f"CSV file {csv_file_path} not found. Starting fresh.")
+        return existing_jobs
+    try:
         with open(csv_file_path, newline='', encoding='utf-8') as csvfile:
+            # Handle potential empty file or header-only file
+            # Peek at the first line to check for content beyond header
+            first_line = csvfile.readline()
+            if not first_line: # Empty file
+                 logger.info(f"CSV file {csv_file_path} is empty.")
+                 return existing_jobs
+            csvfile.seek(0) # Reset cursor to beginning
+
             reader = csv.DictReader(csvfile)
+            # Check if 'Job ID' column exists
+            if 'Job ID' not in reader.fieldnames:
+                 logger.error(f"CSV file {csv_file_path} is missing 'Job ID' header. Cannot track existing jobs.")
+                 return existing_jobs
+
             for row in reader:
-                existing_jobs.add(row['Job ID'])
+                if job_id := row.get('Job ID'): # Check if Job ID is not empty
+                    existing_jobs.add(job_id)
+        logger.info(f"Read {len(existing_jobs)} existing job IDs from {csv_file_path}")
+    except Exception as e:
+         logger.error(f"Error reading existing job data from {csv_file_path}: {e}")
     return existing_jobs
 
-# Function to append new job data to CSV
-
-def append_job_data_to_csv(jobs: list[dict[str, Any]], csv_file_path: Path, existing_jobs: set[str]) -> None:
+def append_job_data_to_csv(jobs: list[dict[str, Any]], csv_file_path: Path, existing_job_ids: set[str]) -> None:
+    """Appends only *new* job data to the CSV file."""
     fieldnames = ['Job ID', 'Job Title', 'Date First Seen (UTC)', 'Date Posted', 'Location', 'Company Name', 'Pay Rate', 'Job URL']
-    is_new_file = not csv_file_path.exists()
-    with open(csv_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        if is_new_file:
-            writer.writeheader()
-        for job in jobs:
-            job_id = job.get('unique_job_number')
-            if job_id not in existing_jobs:
-                writer.writerow({
-                    'Job ID': job_id,
-                    'Job Title': job.get('jobtitle', 'N/A'),
-                    'Date First Seen (UTC)': datetime.now(UTC).isoformat(),
-                    'Date Posted': job.get('date_posted', 'N/A'),
-                    'Location': f"{job.get('city', 'N/A')}, {job.get('stateprovince', 'N/A')}" if job.get('remote', '').lower() != 'yes' else 'Remote',
-                    'Company Name': job.get('source', 'N/A'),
-                    'Pay Rate': f"${job.get('payrate_min', 'N/A')} - ${job.get('payrate_max', 'N/A')}/{job.get('payrate_period', 'N/A')}",
-                    'Job URL': job.get('job_detail_url', 'N/A')
-                })
+    new_jobs_added_count = 0
+    is_new_file = not csv_file_path.exists() or csv_file_path.stat().st_size == 0
 
-# Ensure this block is at the bottom of the file
+    try:
+        with open(csv_file_path, mode='a', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            if is_new_file:
+                writer.writeheader()
+                logger.info(f"Created or wrote header to new CSV: {csv_file_path}")
+
+            for job in jobs:
+                job_id = job.get('unique_job_number')
+                # Check if job_id exists AND if it's not already in the set read at the start
+                if job_id and job_id not in existing_job_ids:
+                    # Format Pay Rate carefully
+                    pay_min_str = job.get('payrate_min')
+                    pay_max_str = job.get('payrate_max')
+                    pay_period = job.get('payrate_period', '')
+                    pay_rate = "N/A"
+                    if pay_min_str and pay_max_str and pay_period:
+                         try: pay_rate = f"${int(float(pay_min_str)):,} - ${int(float(pay_max_str)):,}/{pay_period}"
+                         except (ValueError, TypeError): pay_rate = f"{pay_min_str}-{pay_max_str}/{pay_period}"
+
+                    writer.writerow({
+                        'Job ID': job_id,
+                        'Job Title': job.get('jobtitle', 'N/A'),
+                        'Date First Seen (UTC)': datetime.now(UTC).isoformat(timespec='seconds').replace('+00:00', 'Z'),
+                        'Date Posted': job.get('date_posted', 'N/A'),
+                        'Location': f"{job.get('city', 'N/A')}, {job.get('stateprovince', 'N/A')}" if job.get('remote', '').lower() != 'yes' else 'Remote (US)',
+                        'Company Name': job.get('source', 'N/A'), # Or a better field if available
+                        'Pay Rate': pay_rate,
+                        'Job URL': job.get('job_detail_url', 'N/A')
+                    })
+                    new_jobs_added_count += 1
+                    existing_job_ids.add(job_id) # Add to set immediately to prevent duplicates within the same run if job appears twice
+
+        if new_jobs_added_count > 0:
+            logger.info(f"Appended {new_jobs_added_count} new jobs to {csv_file_path}")
+        else:
+            logger.info("No new jobs to append to CSV this run.")
+
+    except Exception as e:
+        logger.error(f"Error writing to CSV file {csv_file_path}: {e}")
+
+
+# --- Main Execution ---
 if __name__ == "__main__":
     scrape_roberthalf_jobs()

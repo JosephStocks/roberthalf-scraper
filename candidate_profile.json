@@ -1,0 +1,179 @@
+{
+    "name": "Joseph Stocks",
+    "location": "Frisco, TX",
+    "experience_years": 3,
+    "preferred_titles": [
+        "Full-Stack Developer",
+        "Software Engineer",
+        "Backend Engineer",
+        "Frontend Engineer",
+        "Data Engineer",
+        "Analytics Engineer",
+        "Data Analyst",
+        "Automation Engineer"
+    ],
+    "industries": [
+        "Oil & Gas",
+        "Real Estate Tech",
+        "Healthcare Tech",
+        "Consulting"
+    ],
+    "skills": [
+        {
+            "name": "Python",
+            "level": "core"
+        },
+        {
+            "name": "JavaScript",
+            "level": "core"
+        },
+        {
+            "name": "TypeScript",
+            "level": "core"
+        },
+        {
+            "name": "React",
+            "level": "core"
+        },
+        {
+            "name": "React Native",
+            "level": "secondary"
+        },
+        {
+            "name": "FastAPI",
+            "level": "core"
+        },
+        {
+            "name": "Flask",
+            "level": "core"
+        },
+        {
+            "name": "SQL",
+            "level": "core"
+        },
+        {
+            "name": "PostgreSQL",
+            "level": "core"
+        },
+        {
+            "name": "MongoDB",
+            "level": "core"
+        },
+        {
+            "name": "SQLite",
+            "level": "secondary"
+        },
+        {
+            "name": "Linux",
+            "level": "core"
+        },
+        {
+            "name": "Bash / Shell Scripting",
+            "level": "core"
+        },
+        {
+            "name": "Automation Scripting",
+            "level": "core"
+        },
+        {
+            "name": "Systemd",
+            "level": "secondary"
+        },
+        {
+            "name": "Nginx",
+            "level": "secondary"
+        },
+        {
+            "name": "Cloudflare Tunnel",
+            "level": "secondary"
+        },
+        {
+            "name": "AWS Redshift",
+            "level": "secondary"
+        },
+        {
+            "name": "AWS Lambda",
+            "level": "secondary"
+        },
+        {
+            "name": "Docker",
+            "level": "familiar"
+        },
+        {
+            "name": "Git",
+            "level": "core"
+        },
+        {
+            "name": "Pandas",
+            "level": "core"
+        },
+        {
+            "name": "Polars",
+            "level": "core"
+        },
+        {
+            "name": "Data Dashboards & Viz",
+            "level": "core"
+        },
+        {
+            "name": "Chart.js",
+            "level": "familiar"
+        },
+        {
+            "name": "Plotly",
+            "level": "familiar"
+        },
+        {
+            "name": "D3.js",
+            "level": "familiar"
+        },
+        {
+            "name": "Web Scraping",
+            "level": "core"
+        },
+        {
+            "name": "Playwright",
+            "level": "core"
+        },
+        {
+            "name": "REST API Integration",
+            "level": "core"
+        },
+        {
+            "name": "Gmail API",
+            "level": "secondary"
+        },
+        {
+            "name": "OpenAI API & Embeddings",
+            "level": "secondary"
+        },
+        {
+            "name": "Prompt Engineering",
+            "level": "secondary"
+        },
+        {
+            "name": "Classification Models",
+            "level": "secondary"
+        },
+        {
+            "name": "TF-IDF",
+            "level": "familiar"
+        },
+        {
+            "name": "XGBoost",
+            "level": "familiar"
+        },
+        {
+            "name": "Machine Learning (general)",
+            "level": "familiar"
+        },
+        {
+            "name": "Astro.js",
+            "level": "familiar"
+        },
+        {
+            "name": "Vite",
+            "level": "core"
+        }
+    ]
+}
