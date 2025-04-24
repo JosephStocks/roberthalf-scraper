@@ -1,0 +1,16 @@
+{
+    // Let Ruff own import sorting and unused-import warnings
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit", // don’t let Pylance auto-sort
+        "source.fixAll": "explicit" // Ruff will run when you press Save
+    },
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportUnusedImport": "none", // avoid duplicate F401/E
+        "reportUndefinedVariable": "none" // avoid duplicate F821
+    },
+    // Ruff extension switches
+    "ruff.enable": true,
+    // Optional: use the native Rust LSP for more speed
+    "ruff.nativeServer": "on",
+    "python.analysis.typeCheckingMode": "standard"
+}
