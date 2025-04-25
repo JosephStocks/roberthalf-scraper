@@ -355,6 +355,7 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
         r_score = tier2_result.get("role_match", {}).get("score", 0)
 
         # Ensure scores are numeric before calculation
+        calculated_score_10 = 0.0 # Initialize before try block
         try:
              calculated_score_10 = (
                  float(s_score) * weights["skill"] +
