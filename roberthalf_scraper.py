@@ -247,16 +247,16 @@ def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None:  # Use O
                 logger.error(f"Error during post-login wait: {wait_err}")
                 return None
 
-            # Get cookies and convert to list[dict]
-            playwright_cookies = context.cookies()
+            # Get cookies
+            playwright_cookies = context.cookies() # Type is List[Cookie] according to linter
             if not playwright_cookies:
                 logger.error("Failed to retrieve cookies after login attempt.")
                 return None
 
-            # Explicitly convert List[Cookie] to list[dict[str, Any]]
+            # Explicitly convert List[Cookie] to list[dict[str, Any]] using dict access
             cookies: list[dict[str, Any]] = [
                 {
-                    key: getattr(cookie, key)
+                    key: cookie[key] # Use dictionary-style access
                     for key in ["name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite"]
                 }
                 for cookie in playwright_cookies
