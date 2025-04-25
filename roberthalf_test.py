@@ -1,4 +1,3 @@
-
 from playwright.sync_api import sync_playwright
 
 from config_loader import load_test_config
@@ -16,7 +15,7 @@ def test_roberthalf_page():
         # Launch browser with proxy configuration
         browser = p.chromium.launch(
             proxy=proxy_config,
-            headless=False  # Set to False to see the browser
+            headless=False,  # Set to False to see the browser
         )
 
         try:
@@ -29,7 +28,7 @@ def test_roberthalf_page():
             page.goto("https://www.roberthalf.com/us/en/jobs?city=Dallas&lobid=RHT")
 
             # Wait for the page to load
-            page.wait_for_load_state('networkidle')
+            page.wait_for_load_state("networkidle")
 
             # Take a snapshot of the page structure
             print("\nTaking accessibility snapshot...")
@@ -47,6 +46,7 @@ def test_roberthalf_page():
             print(f"An error occurred: {e}")
         finally:
             browser.close()
+
 
 if __name__ == "__main__":
     test_roberthalf_page()

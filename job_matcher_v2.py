@@ -10,6 +10,7 @@ from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 
 logger = logging.getLogger(__name__)
 
+
 class JobMatchAnalyzerV2:
     """
     Analyzes job descriptions against a candidate profile using a two-tier approach.
@@ -93,7 +94,7 @@ Format your response as JSON:
 Return ONLY valid JSON. Do not repeat the skill list unless justifying the role match.
 """
 
-    def __init__(self, config: dict[str, Any], llm_debug: bool = False): # Added llm_debug
+    def __init__(self, config: dict[str, Any], llm_debug: bool = False):  # Added llm_debug
         """
         Initialize the analyzer with configuration.
 
@@ -102,7 +103,7 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
             llm_debug (bool): Flag to enable verbose LLM logging.
         """
         self.config = config
-        self.llm_debug = llm_debug # Store the flag
+        self.llm_debug = llm_debug  # Store the flag
         if self.llm_debug:
             logger.info("LLM Debug logging enabled for JobMatchAnalyzerV2.")
 
@@ -116,10 +117,14 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
         self.candidate_profile = self._load_profile(profile_path_str)
 
         # Store model names and thresholds
-        self.model_tier1 = config.get('MATCHING_MODEL_TIER1', 'gpt-4o-mini')
-        self.threshold_tier1 = config.get('MATCHING_THRESHOLD_TIER1', 60)
-        self.model_tier2 = config.get('MATCHING_MODEL_TIER2', 'gpt-4o-mini') # Consistent model choice
-        self.final_threshold = config.get('MATCHING_THRESHOLD_FINAL', 75) # Used later for filtering notifications
+        self.model_tier1 = config.get("MATCHING_MODEL_TIER1", "gpt-4o-mini")
+        self.threshold_tier1 = config.get("MATCHING_THRESHOLD_TIER1", 60)
+        self.model_tier2 = config.get(
+            "MATCHING_MODEL_TIER2", "gpt-4o-mini"
+        )  # Consistent model choice
+        self.final_threshold = config.get(
+            "MATCHING_THRESHOLD_FINAL", 75
+        )  # Used later for filtering notifications
 
     def _load_profile(self, profile_path_str: str | None) -> dict[str, Any] | None:
         """Loads the candidate profile JSON."""
@@ -131,22 +136,34 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
             logger.error(f"Candidate profile file not found at: {profile_path}")
             return None
         try:
-            with open(profile_path, encoding='utf-8') as f:
+            with open(profile_path, encoding="utf-8") as f:
                 # Load the JSON directly, assuming it starts with {"name": ...}
                 profile = json.load(f)
             logger.info(f"Candidate profile loaded successfully from {profile_path}")
             # Add experience years if it wasn't top-level (adjust if needed based on final JSON structure)
-            if 'experience_years' not in profile:
+            if "experience_years" not in profile:
                 # Try finding it nested if your structure is different
                 # profile['experience_years'] = profile.get('candidate_profile', {}).get('experience_years', 3)
-                 profile['experience_years'] = 3 # Default if truly missing
-                 logger.warning("experience_years not found at top level, using default.")
+                profile["experience_years"] = 3  # Default if truly missing
+                logger.warning("experience_years not found at top level, using default.")
             return profile
-        except (OSError, FileNotFoundError, json.JSONDecodeError, Exception) as e: # Added FileNotFoundError
+        except (
+            OSError,
+            FileNotFoundError,
+            json.JSONDecodeError,
+            Exception,
+        ) as e:  # Added FileNotFoundError
             logger.error(f"Failed to load or parse candidate profile from {profile_path}: {e}")
             return None
 
-    def _call_openai_api(self, system_prompt: str, user_content: str, model: str, max_retries: int = 2, initial_delay: float = 5.0) -> dict[str, Any] | None:
+    def _call_openai_api(
+        self,
+        system_prompt: str,
+        user_content: str,
+        model: str,
+        max_retries: int = 2,
+        initial_delay: float = 5.0,
+    ) -> dict[str, Any] | None:
         """Helper function to call OpenAI API with retries and JSON parsing."""
         if self.llm_debug:
             logger.debug(f"--- LLM Call Start ({model}) ---")
@@ -157,7 +174,7 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
         attempt = 0
         delay = initial_delay
         last_exception = None
-        response_content = None # Initialize for error logging
+        response_content = None  # Initialize for error logging
 
         while attempt <= max_retries:
             attempt += 1
@@ -171,7 +188,7 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
                     ],
                     response_format={"type": "json_object"},
                     temperature=0.2,
-                    timeout=60.0 # Increased timeout for potentially complex analysis
+                    timeout=60.0,  # Increased timeout for potentially complex analysis
                 )
                 response_content = response.choices[0].message.content
                 if not response_content:
@@ -179,12 +196,14 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
                     # Consider if retry is useful here, maybe a temp API issue
                     last_exception = ValueError("API returned empty content")
                     if attempt <= max_retries:
-                         sleep_time = delay * (2 ** (attempt - 1))
-                         logger.info(f"Retrying {model} call due to empty response in {sleep_time:.1f} seconds...")
-                         time.sleep(sleep_time)
-                         continue # Go to next attempt
+                        sleep_time = delay * (2 ** (attempt - 1))
+                        logger.info(
+                            f"Retrying {model} call due to empty response in {sleep_time:.1f} seconds..."
+                        )
+                        time.sleep(sleep_time)
+                        continue  # Go to next attempt
                     else:
-                         break # Max retries reached
+                        break  # Max retries reached
                 if self.llm_debug:
                     logger.debug(f"LLM Raw Response ({model}):\n{response_content}")
 
@@ -195,45 +214,55 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
                     logger.debug(f"--- LLM Call End ({model}) ---")
                 return result
             except json.JSONDecodeError as json_err:
-                logger.error(f"Failed to parse JSON from {model}: {json_err}. Response: {response_content}")
+                logger.error(
+                    f"Failed to parse JSON from {model}: {json_err}. Response: {response_content}"
+                )
                 last_exception = json_err
                 # Maybe retry once on JSON error? Sometimes it's a fluke.
-                if attempt == 1: # Only retry once on first JSON error
-                     logger.info(f"Retrying {model} call once due to JSON parse error...")
-                     time.sleep(delay)
-                     continue
-                break # Don't retry JSON parsing errors further
+                if attempt == 1:  # Only retry once on first JSON error
+                    logger.info(f"Retrying {model} call once due to JSON parse error...")
+                    time.sleep(delay)
+                    continue
+                break  # Don't retry JSON parsing errors further
             except (RateLimitError, APIConnectionError, APITimeoutError) as api_err:
-                logger.warning(f"OpenAI API error ({type(api_err).__name__}) on attempt {attempt} for {model}: {api_err}")
+                logger.warning(
+                    f"OpenAI API error ({type(api_err).__name__}) on attempt {attempt} for {model}: {api_err}"
+                )
                 last_exception = api_err
                 if attempt > max_retries:
                     logger.error(f"Max retries reached for {model}.")
                     break
-                sleep_time = delay * (2 ** (attempt - 1)) # Exponential backoff
+                sleep_time = delay * (2 ** (attempt - 1))  # Exponential backoff
                 logger.info(f"Retrying {model} call in {sleep_time:.1f} seconds...")
                 time.sleep(sleep_time)
             except Exception as e:
-                logger.error(f"Unexpected error during OpenAI API call ({model}): {e}", exc_info=True)
+                logger.error(
+                    f"Unexpected error during OpenAI API call ({model}): {e}", exc_info=True
+                )
                 last_exception = e
-                break # Don't retry unexpected errors
+                break  # Don't retry unexpected errors
 
-        logger.error(f"Failed to get valid response from OpenAI ({model}) after {attempt} attempts. Last error: {last_exception}")
+        logger.error(
+            f"Failed to get valid response from OpenAI ({model}) after {attempt} attempts. Last error: {last_exception}"
+        )
         if self.llm_debug:
-             logger.debug(f"--- LLM Call End ({model}) - FAILED ---")
+            logger.debug(f"--- LLM Call End ({model}) - FAILED ---")
         return None
 
     def _run_tier1_analysis(self, job_description: str) -> dict[str, Any] | None:
         """Runs the Tier 1 skill analysis."""
-        if not self.candidate_profile: return None
+        if not self.candidate_profile:
+            return None
         if self.llm_debug:
             logger.debug("--- Running Tier 1 Analysis ---")
 
-        user_content = json.dumps({
-            "candidate_profile": {
-                "skills": self.candidate_profile.get("skills", [])
+        user_content = json.dumps(
+            {
+                "candidate_profile": {"skills": self.candidate_profile.get("skills", [])},
+                "job_posting": job_description,
             },
-            "job_posting": job_description
-        }, indent=2)
+            indent=2,
+        )
 
         # Debug log for user content already in _call_openai_api
         result = self._call_openai_api(self.TIER1_SYSTEM_PROMPT, user_content, self.model_tier1)
@@ -243,17 +272,23 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
             logger.debug("--- Tier 1 Analysis End ---")
         return result
 
-    def _run_tier2_analysis(self, job_description: str, tier1_result: dict[str, Any]) -> dict[str, Any] | None:
+    def _run_tier2_analysis(
+        self, job_description: str, tier1_result: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Runs the Tier 2 holistic analysis, using Tier 1 results."""
-        if not self.candidate_profile: return None
+        if not self.candidate_profile:
+            return None
         if self.llm_debug:
             logger.debug("--- Running Tier 2 Analysis ---")
 
-        user_content = json.dumps({
-            "candidate_profile": self.candidate_profile, # Full profile
-            "job_description": job_description,
-            "tier1_skill_analysis": tier1_result # Pass Tier 1 results
-        }, indent=2)
+        user_content = json.dumps(
+            {
+                "candidate_profile": self.candidate_profile,  # Full profile
+                "job_description": job_description,
+                "tier1_skill_analysis": tier1_result,  # Pass Tier 1 results
+            },
+            indent=2,
+        )
 
         # Debug log for user content already in _call_openai_api
         result = self._call_openai_api(self.TIER2_SYSTEM_PROMPT, user_content, self.model_tier2)
@@ -263,7 +298,9 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
             logger.debug("--- Tier 2 Analysis End ---")
         return result
 
-    def analyze_job(self, job_data: dict[str, Any]) -> dict[str, Any]: # Return Dict, including potential errors
+    def analyze_job(
+        self, job_data: dict[str, Any]
+    ) -> dict[str, Any]:  # Return Dict, including potential errors
         """
         Performs the full two-tier analysis for a single job.
 
@@ -276,10 +313,12 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
                   'meets_final_threshold', 'analysis_timestamp', and potentially 'error'.
         """
         # Get timestamp at the beginning of analysis attempt
-        analysis_timestamp = datetime.now(UTC).isoformat() # Use UTC
+        analysis_timestamp = datetime.now(UTC).isoformat()  # Use UTC
 
         if self.llm_debug:
-            logger.debug(f"== Starting Analysis for Job ID: {job_data.get('unique_job_number', 'UnknownID')} ==")
+            logger.debug(
+                f"== Starting Analysis for Job ID: {job_data.get('unique_job_number', 'UnknownID')} =="
+            )
 
         if not self.candidate_profile:
             logger.error("Cannot analyze job: Candidate profile not loaded.")
@@ -290,7 +329,9 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
         job_title = job_data.get("jobtitle", "N/A")
 
         if not job_description:
-            logger.warning(f"Skipping analysis for Job ID {job_id} ({job_title}): Missing description.")
+            logger.warning(
+                f"Skipping analysis for Job ID {job_id} ({job_title}): Missing description."
+            )
             return {"error": "Missing description", "analysis_timestamp": analysis_timestamp}
 
         logger.info(f"--- Analyzing Job ID: {job_id} ({job_title}) ---")
@@ -298,34 +339,36 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
         # --- Run Tier 1 ---
         tier1_result = self._run_tier1_analysis(job_description)
 
-        if not tier1_result or 'skill_score' not in tier1_result:
+        if not tier1_result or "skill_score" not in tier1_result:
             logger.error(f"Tier 1 analysis failed for Job ID {job_id}.")
-            return { # Return partial info with error
+            return {  # Return partial info with error
                 "error": "Tier 1 analysis failed",
                 "tier1_result": tier1_result,
                 "tier2_result": None,
                 "final_score_calculated": None,
                 "meets_final_threshold": False,
-                "analysis_timestamp": analysis_timestamp
+                "analysis_timestamp": analysis_timestamp,
             }
 
-        skill_score = tier1_result.get('skill_score', 0.0)
+        skill_score = tier1_result.get("skill_score", 0.0)
         logger.info(f"Job ID {job_id} - Tier 1 Skill Score: {skill_score:.1f}")
 
         # --- Check Tier 1 Threshold ---
         if skill_score < self.threshold_tier1:
-            logger.info(f"Job ID {job_id} did not meet Tier 1 threshold ({self.threshold_tier1}). Skipping Tier 2.")
-            return { # Return only Tier 1 info, no error key needed here
+            logger.info(
+                f"Job ID {job_id} did not meet Tier 1 threshold ({self.threshold_tier1}). Skipping Tier 2."
+            )
+            return {  # Return only Tier 1 info, no error key needed here
                 "tier1_result": tier1_result,
                 "tier2_result": None,
                 "final_score_calculated": None,
                 "meets_final_threshold": False,
-                "analysis_timestamp": analysis_timestamp
+                "analysis_timestamp": analysis_timestamp,
             }
 
         # --- Run Tier 2 ---
         logger.info(f"Job ID {job_id} meets Tier 1 threshold. Proceeding to Tier 2 analysis.")
-        time.sleep(1.0) # Small delay between API calls
+        time.sleep(1.0)  # Small delay between API calls
         tier2_result = self._run_tier2_analysis(job_description, tier1_result)
 
         if not tier2_result:
@@ -337,46 +380,54 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
                 "tier2_result": None,
                 "final_score_calculated": None,
                 "meets_final_threshold": False,
-                 "analysis_timestamp": analysis_timestamp
+                "analysis_timestamp": analysis_timestamp,
             }
 
-        logger.info(f"Job ID {job_id} - Tier 2 Analysis Complete. Recommendation: {tier2_result.get('overall_recommendation', 'N/A')}")
+        logger.info(
+            f"Job ID {job_id} - Tier 2 Analysis Complete. Recommendation: {tier2_result.get('overall_recommendation', 'N/A')}"
+        )
 
         # --- Calculate Final Score (Using Tier 2 component scores) ---
-        weights = { # Make weights configurable if needed
+        weights = {  # Make weights configurable if needed
             "skill": 0.40,
             "experience": 0.25,
             "location": 0.20,
-            "role": 0.15
+            "role": 0.15,
         }
-        s_score = skill_score / 10.0 # Normalize Tier 1 score (0-100 -> 0-10)
+        s_score = skill_score / 10.0  # Normalize Tier 1 score (0-100 -> 0-10)
         e_score = tier2_result.get("experience_match", {}).get("score", 0)
         l_score = tier2_result.get("location_match", {}).get("score", 0)
         r_score = tier2_result.get("role_match", {}).get("score", 0)
 
         # Ensure scores are numeric before calculation
-        calculated_score_10 = 0.0 # Initialize before try block
+        calculated_score_10 = 0.0  # Initialize before try block
         try:
-             calculated_score_10 = (
-                 float(s_score) * weights["skill"] +
-                 float(e_score) * weights["experience"] +
-                 float(l_score) * weights["location"] +
-                 float(r_score) * weights["role"]
-             )
-             final_score_calculated = round(calculated_score_10 * 10.0, 1) # Scale back to 0-100
-             logger.info(f"Job ID {job_id} - Calculated Final Score: {final_score_calculated:.1f}")
+            calculated_score_10 = (
+                float(s_score) * weights["skill"]
+                + float(e_score) * weights["experience"]
+                + float(l_score) * weights["location"]
+                + float(r_score) * weights["role"]
+            )
+            final_score_calculated = round(calculated_score_10 * 10.0, 1)  # Scale back to 0-100
+            logger.info(f"Job ID {job_id} - Calculated Final Score: {final_score_calculated:.1f}")
         except (ValueError, TypeError) as calc_err:
-             logger.error(f"Error calculating final score for Job ID {job_id}: {calc_err}. Scores: s={s_score}, e={e_score}, l={l_score}, r={r_score}")
-             final_score_calculated = None # Indicate calculation failure
+            logger.error(
+                f"Error calculating final score for Job ID {job_id}: {calc_err}. Scores: s={s_score}, e={e_score}, l={l_score}, r={r_score}"
+            )
+            final_score_calculated = None  # Indicate calculation failure
 
         # --- Determine if it meets the final threshold ---
         meets_final_threshold = False
         if final_score_calculated is not None:
             meets_final_threshold = final_score_calculated >= self.final_threshold
             if not meets_final_threshold:
-                logger.info(f"Job ID {job_id} - Score ({final_score_calculated:.1f}) is below final threshold ({self.final_threshold}).")
+                logger.info(
+                    f"Job ID {job_id} - Score ({final_score_calculated:.1f}) is below final threshold ({self.final_threshold})."
+                )
         else:
-             logger.warning(f"Cannot determine final threshold match for Job ID {job_id} due to score calculation error.")
+            logger.warning(
+                f"Cannot determine final threshold match for Job ID {job_id} due to score calculation error."
+            )
 
         # Combine all results into the final analysis dictionary
         full_analysis = {
@@ -384,13 +435,15 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
             "tier2_result": tier2_result,
             "final_score_calculated": final_score_calculated,
             "meets_final_threshold": meets_final_threshold,
-            "analysis_timestamp": analysis_timestamp # Use timestamp from start of analysis
+            "analysis_timestamp": analysis_timestamp,  # Use timestamp from start of analysis
         }
 
         if self.llm_debug:
             logger.debug(f"Tier 1 Score: {skill_score:.1f}")
-            logger.debug(f"Tier 2 Scores: {e_score}, {l_score}, {r_score} -> Avg (0-100): {calculated_score_10:.1f}")
+            logger.debug(
+                f"Tier 2 Scores: {e_score}, {l_score}, {r_score} -> Avg (0-100): {calculated_score_10:.1f}"
+            )
             logger.debug(f"Final Calculated Score: {final_score_calculated:.1f}")
             logger.debug(f"== Analysis End for Job ID: {job_id} ==")
 
-        return full_analysis # Always return the analysis dict
+        return full_analysis  # Always return the analysis dict

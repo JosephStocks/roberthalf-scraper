@@ -217,9 +217,7 @@ def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None:
             sign_in_button.click()
 
             try:
-                page.wait_for_url(
-                    "**/s/myjobs", timeout=BROWSER_TIMEOUT_MS / 2
-                )
+                page.wait_for_url("**/s/myjobs", timeout=BROWSER_TIMEOUT_MS / 2)
                 logger.info("Post-login URL reached or network idle.")
             except PlaywrightTimeoutError:
                 error_locator = page.locator('div[role="alert"]:visible, .login-error:visible')
@@ -230,7 +228,7 @@ def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None:
                     )
                     logger.error(f"Login failed. Detected error message: {error_text.strip()}")
                     with contextlib.suppress(Exception):
-                        if page: # Check if page exists before screenshot
+                        if page:  # Check if page exists before screenshot
                             page.screenshot(path="playwright_login_error.png")
                     return None
                 else:
@@ -241,7 +239,7 @@ def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None:
                 logger.error(f"Error during post-login wait: {wait_err}")
                 return None
 
-            playwright_cookies = context.cookies() # Type is List[Cookie] according to linter
+            playwright_cookies = context.cookies()  # Type is List[Cookie] according to linter
             if not playwright_cookies:
                 logger.error("Failed to retrieve cookies after login attempt.")
                 return None
@@ -249,8 +247,17 @@ def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None:
             # Explicitly convert List[Cookie] to list[dict[str, Any]] using dict access
             cookies: list[dict[str, Any]] = [
                 {
-                    key: cookie[key] # Use dictionary-style access
-                    for key in ["name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite"]
+                    key: cookie[key]  # Use dictionary-style access
+                    for key in [
+                        "name",
+                        "value",
+                        "domain",
+                        "path",
+                        "expires",
+                        "httpOnly",
+                        "secure",
+                        "sameSite",
+                    ]
                 }
                 for cookie in playwright_cookies
             ]
@@ -411,7 +418,7 @@ def fetch_jobs(
                 except ValueError as e:
                     logger.warning(f"Could not parse proxy server URL '{server_url}': {e}")
             else:
-                 # Ensure scheme is present for requests proxy format
+                # Ensure scheme is present for requests proxy format
                 try:
                     parsed_url = urlparse(server_url)
                     scheme = parsed_url.scheme if parsed_url.scheme else "http"
@@ -419,11 +426,13 @@ def fetch_jobs(
                     proxies = {"http": proxy_url_no_auth, "https": proxy_url_no_auth}
                     logger.debug("Using proxy for requests (no auth)")
                 except ValueError as e:
-                     logger.warning(f"Could not parse proxy server URL '{server_url}': {e}")
+                    logger.warning(f"Could not parse proxy server URL '{server_url}': {e}")
         else:
-            logger.warning("Proxy config dictionary returned, but 'server' key is missing. No proxy used.")
+            logger.warning(
+                "Proxy config dictionary returned, but 'server' key is missing. No proxy used."
+            )
 
-    response = None # Initialize response before try block
+    response = None  # Initialize response before try block
     try:
         logger.info(f"Fetching {'remote' if is_remote else 'local'} jobs page {page_number}")
         response = requests.post(
@@ -847,9 +856,7 @@ def _run_git_command(
         return False, "", f"Unexpected error: {e}"
 
 
-def _commit_and_push_report(
-    html_file_path: Path, timestamp: str, config: dict[str, Any]
-) -> None:
+def _commit_and_push_report(html_file_path: Path, timestamp: str, config: dict[str, Any]) -> None:
     repo_dir = Path.cwd()
     commit_message = f"Update job report for {config.get('FILTER_STATE', 'N/A')} - {timestamp}"
     html_rel_path_str = str(html_file_path)  # Use the path relative to cwd directly
