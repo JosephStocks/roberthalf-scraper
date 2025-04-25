@@ -879,6 +879,7 @@ def save_job_results(
     new_job_ids: set[str],
     analyze_all: bool = False,  # Add the argument here
     filename_prefix: str = "roberthalf",
+    llm_debug: bool = False,  # Add the llm_debug argument here
 ) -> None:
     """Save the final list of jobs to JSON and generate/commit/push an HTML report."""
     output_dir = OUTPUT_DIR
@@ -1141,13 +1142,17 @@ def save_job_results(
         logger.info("Pushover notifications are disabled.")
 
 
-def scrape_roberthalf_jobs(analyze_all: bool = False) -> None:
+def scrape_roberthalf_jobs(analyze_all: bool = False, llm_debug: bool = False) -> None:
     """Main function to orchestrate the Robert Half job scraping."""
     logger.info("--- Starting Robert Half Job Scraper ---")
     if analyze_all:
         logger.warning(
             "!!! --analyze-all flag is active: AI analysis will run on ALL jobs found in this report (potential extra cost/time) !!!"
-        )  # Added warning
+        )
+    if llm_debug:
+        logger.warning(
+            "!!! --llm-debug flag is active: Enabling verbose logging for LLM analysis (ensure log level is DEBUG). !!!"
+        )
     start_time = time.time()
 
     # Initialize Analyzer *before* the main try block
@@ -1155,7 +1160,8 @@ def scrape_roberthalf_jobs(analyze_all: bool = False) -> None:
     if config.get("MATCHING_ENABLED"):
         logger.info("AI Matching is enabled, initializing analyzer...")
         try:
-            analyzer = JobMatchAnalyzerV2(config)
+            # Pass the llm_debug flag to the analyzer
+            analyzer = JobMatchAnalyzerV2(config, llm_debug=llm_debug)
             # Crucially, check if the profile actually loaded within the analyzer
             if not analyzer.candidate_profile:
                 logger.error(
@@ -1280,7 +1286,8 @@ def scrape_roberthalf_jobs(analyze_all: bool = False) -> None:
             analyzer,
             new_job_ids,
             analyze_all=analyze_all,
-        )  # Pass the flag here
+            llm_debug=llm_debug,
+        )
         append_job_data_to_csv(unique_job_list, CSV_FILE_PATH, existing_job_ids_csv)
 
     except RuntimeError as rt_err:
@@ -1392,9 +1399,7 @@ def append_job_data_to_csv(
                     )  # Add to set immediately to prevent duplicates within the same run if job appears twice
 
         if new_jobs_added_count > 0:
-            logger.info(f"Appended {new_jobs_added_count} new jobs to {csv_file_path}")
-        else:
-            logger.info("No new jobs to append to CSV this run.")
+            logger.info(f"Appended {new_jobs_added_count} new job entries to {csv_file_path}")
 
     except Exception as e:
         logger.error(f"Error writing to CSV file {csv_file_path}: {e}")
@@ -1410,7 +1415,12 @@ if __name__ == "__main__":
         action="store_true",  # Creates a boolean flag
         help="Force AI analysis on ALL jobs found in this run, not just new ones (for testing).",
     )
+    parser.add_argument(
+        "--llm-debug",
+        action="store_true",
+        help="Enable verbose debug logging for the LLM analysis steps.",
+    )
     args = parser.parse_args()
 
     # Call the main function, passing the value of the flag
-    scrape_roberthalf_jobs(analyze_all=args.analyze_all)
+    scrape_roberthalf_jobs(analyze_all=args.analyze_all, llm_debug=args.llm_debug)
