@@ -3,9 +3,77 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Robert Half Job Report (TX) - 2025-04-24 21:02:13 CDT</title>
+    <title>Robert Half Job Report (TX) - 2025-04-24 21:21:36 CDT</title>
     <style>
-        /* ... existing styles ... */
+        /* Basic styles from the old version */
+        body { font-family: sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        p { color: #555; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        a { color: #007bff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .pay-rate, .location { white-space: nowrap; }
+
+        /* Styling for the expandable content */
+        .job-row {
+            cursor: pointer;
+        }
+        .job-row:hover {
+            background-color: #f0f8ff; /* AliceBlue on hover */
+        }
+        .job-description {
+            padding: 15px;
+            background-color: #fff;
+            border-top: none;
+            margin-top: 0;
+        }
+        .description-container {
+            padding: 0;
+            border-top: none;
+            background-color: #fff;
+        }
+        .job-row .expander {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            text-align: center;
+            line-height: 20px;
+            border-radius: 3px;
+            margin-right: 8px;
+            background-color: #f2f2f2; /* Light gray background for expander */
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        /* Styling for new job highlighting */
+        .new-job .title-cell {
+            background-color: #f0fff0; /* Honeydew for new job title cell */
+        }
+        .new-tag {
+            display: inline-block;
+            background-color: #28a745; /* Green background for NEW tag */
+            color: white;
+            padding: 2px 6px;
+            font-size: 0.75em;
+            font-weight: bold;
+            border-radius: 4px;
+            margin-right: 5px;
+            vertical-align: middle;
+        }
+
+        /* Styles for LLM analysis elements */
         .score-badge { /* Style for score */
             display: inline-block; padding: 2px 5px; margin-right: 5px;
             font-size: 0.8em; border-radius: 4px; color: white;
@@ -22,7 +90,7 @@
 </head>
 <body>
     <h1>Robert Half Job Report</h1>
-    <p>Generated: 2025-04-24 21:02:13 CDT</p>
+    <p>Generated: 2025-04-24 21:21:36 CDT</p>
     <p>Filters: State = TX, Posted Within = PAST 24 HOURS</p>
     <p>Found 6 jobs in TX and 6 remote jobs (Total Unique: 12). Identified <span style="background-color: #f0fff0; padding: 1px 3px; border: 1px solid #ccc;">0 New Jobs</span> since last CSV entry. API reported 68 total jobs matching period.</p>
 
