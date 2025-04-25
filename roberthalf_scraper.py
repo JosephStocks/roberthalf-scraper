@@ -33,11 +33,11 @@ DOCS_DIR = Path("docs")
 CSV_FILE_PATH = OUTPUT_DIR / "job_data.csv"
 DEFAULT_SESSION_FILENAME = "session_data.json"
 
-# Create directories if they don't exist early on
+
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-DOCS_DIR.mkdir(parents=True, exist_ok=True)  # Ensure docs dir exists
+DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # --- Logging Setup ---
@@ -92,9 +92,7 @@ GITHUB_PAGES_URL = config.get("GITHUB_PAGES_URL")
 PUSHOVER_ENABLED = config.get("PUSHOVER_ENABLED", False)
 
 
-# --- Helper Functions (Keep as they are, or move utils if preferred) ---
 def get_user_agent() -> str:
-    # ... (implementation) ...
     if not ROTATE_USER_AGENT:
         return DEFAULT_USER_AGENT
     user_agents = [
@@ -108,7 +106,6 @@ def get_user_agent() -> str:
 
 
 def add_human_delay(min_seconds: float = 0.5, max_seconds: float = 1.5) -> None:
-    # ... (implementation) ...
     delay = random.uniform(min_seconds, max_seconds)
     logger.debug(f"Adding browser interaction delay of {delay:.2f} seconds")
     time.sleep(delay)
@@ -117,7 +114,6 @@ def add_human_delay(min_seconds: float = 0.5, max_seconds: float = 1.5) -> None:
 def save_session_data(
     cookies: list[dict[str, Any]], user_agent: str, filename_path: Path = SESSION_FILE_PATH
 ) -> None:
-    # ... (implementation) ...
     if not SAVE_SESSION:
         logger.info("Session saving is disabled.")
         return
@@ -126,7 +122,7 @@ def save_session_data(
         session_data = {
             "cookies": cookies,
             "user_agent": user_agent,
-            "timestamp": datetime.now(UTC).isoformat(),  # Store timestamp
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         with open(filename_path, "w", encoding="utf-8") as f:  # Ensure UTF-8
             json.dump(session_data, f, indent=2)
@@ -137,8 +133,7 @@ def save_session_data(
 
 def load_session_data(
     filename_path: Path = SESSION_FILE_PATH,
-) -> tuple[list[dict[str, Any]], str] | None:  # Use Optional
-    # ... (implementation) ...
+) -> tuple[list[dict[str, Any]], str] | None:
     if not SAVE_SESSION:
         return None
     if not filename_path.exists():
@@ -171,8 +166,7 @@ def load_session_data(
         return None
 
 
-def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None:  # Use Optional
-    # ... (implementation - looks mostly ok) ...
+def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None:
     logger.info("Starting login process with Playwright")
     session_user_agent = get_user_agent()
     logger.info(f"Using User Agent for login: {session_user_agent}")
@@ -184,7 +178,7 @@ def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None:  # Use O
         logger.error("ROBERTHALF_USERNAME or ROBERTHALF_PASSWORD not found.")
         return None  # Return None on credential error
 
-    page = None # Initialize page to None before try block
+    page = None
     browser = None
     context = None
     with sync_playwright() as p:
@@ -247,7 +241,6 @@ def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None:  # Use O
                 logger.error(f"Error during post-login wait: {wait_err}")
                 return None
 
-            # Get cookies
             playwright_cookies = context.cookies() # Type is List[Cookie] according to linter
             if not playwright_cookies:
                 logger.error("Failed to retrieve cookies after login attempt.")
@@ -266,9 +259,8 @@ def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None:  # Use O
             return cookies, session_user_agent
         except PlaywrightTimeoutError as te:
             logger.error(f"Timeout error during Playwright operation: {te}")
-            # page = None # Ensure page is defined in this block - already defined above
             with contextlib.suppress(Exception):
-                if page: # Check if page exists before screenshot
+                if page:
                     page.screenshot(path="playwright_timeout_error.png")
             return None
         except PlaywrightError as pe:
@@ -285,7 +277,6 @@ def login_and_get_session() -> tuple[list[dict[str, Any]], str] | None:  # Use O
 
 
 def validate_session(cookies_list: list[dict[str, Any]], user_agent: str) -> bool:
-    # ... (implementation - looks ok) ...
     logger.info("Validating session cookies via API")
     url = "https://www.roberthalf.com/bin/jobSearchServlet"
     cookie_dict = {cookie["name"]: cookie["value"] for cookie in cookies_list}
@@ -328,7 +319,7 @@ def validate_session(cookies_list: list[dict[str, Any]], user_agent: str) -> boo
         return False
 
 
-def get_or_refresh_session() -> tuple[list[dict[str, Any]], str] | None:  # Use Optional
+def get_or_refresh_session() -> tuple[list[dict[str, Any]], str] | None:
     """Get existing session data or create a new one if needed."""
     loaded_data = load_session_data()
     if loaded_data:
@@ -352,14 +343,12 @@ def get_or_refresh_session() -> tuple[list[dict[str, Any]], str] | None:  # Use 
 
 
 def filter_jobs_by_state(jobs: list[dict[str, Any]], state_code: str) -> list[dict[str, Any]]:
-    # ... (implementation - looks ok) ...
     filtered_jobs = [
         job
         for job in jobs
         if (job.get("stateprovince") == state_code)
         or (job.get("remote", "").lower() == "yes" and job.get("country", "").lower() == "us")
     ]
-    # ... (logging counts) ...
     return filtered_jobs
 
 
@@ -368,8 +357,7 @@ def fetch_jobs(
     user_agent: str,
     page_number: int = 1,
     is_remote: bool = False,
-) -> dict[str, Any] | None:  # Use Optional
-    # ... (implementation - proxy logic looks ok, use Optional return) ...
+) -> dict[str, Any] | None:
     url = "https://www.roberthalf.com/bin/jobSearchServlet"
     cookie_dict = {cookie["name"]: cookie["value"] for cookie in cookies_list}
     headers = {  # ... headers ...
@@ -472,8 +460,7 @@ def fetch_jobs(
 
 def fetch_with_retry(
     cookies_list: list[dict[str, Any]], user_agent: str, page_number: int, is_remote: bool = False
-) -> dict[str, Any] | None:  # Use Optional
-    # ... (implementation - looks ok) ...
+) -> dict[str, Any] | None:
     base_wait_time = 5
     for attempt in range(MAX_RETRIES):
         result = fetch_jobs(cookies_list, user_agent, page_number, is_remote)
@@ -490,16 +477,14 @@ def fetch_with_retry(
     return None
 
 
-def _generate_html_report(  # Add new_job_ids argument
+def _generate_html_report(
     jobs_list: list[dict[str, Any]],
     timestamp: str,
     total_found: int,
     state_filter: str,
     job_period: str,
-    new_job_ids: set[str],  # Added
+    new_job_ids: set[str],
 ) -> str:
-    # ... (Existing HTML generation - Consider adding analysis scores here) ...
-    # Example: Add a score column or include in expandable description
     num_tx_jobs = len([job for job in jobs_list if job.get("stateprovince") == state_filter])
     num_remote_jobs = len([job for job in jobs_list if job.get("remote", "").lower() == "yes"])
     num_new_jobs = len(new_job_ids)
@@ -625,7 +610,6 @@ def _generate_html_report(  # Add new_job_ids argument
     jobs_list.sort(
         key=lambda x: (
             x.get("is_new", False),
-            # --- MODIFIED SCORE LOGIC ---
             (
                 # Use walrus operator (:=) to assign analysis dict if it exists
                 # Check analysis exists, has no 'error', and calculated score is not None
@@ -636,7 +620,6 @@ def _generate_html_report(  # Add new_job_ids argument
                 # Otherwise, default to -1 (or 0 if you prefer)
                 else -1
             ),
-            # --- END MODIFIED SCORE LOGIC ---
             x.get("date_posted", "1970-01-01T00:00:00Z"),
             x.get("jobtitle", ""),
         ),
@@ -644,7 +627,6 @@ def _generate_html_report(  # Add new_job_ids argument
     )
 
     for idx, job in enumerate(jobs_list, 1):
-        # ... (extract title, location, pay, etc.) ...
         title = job.get("jobtitle", "N/A")
         city = job.get("city", "N/A")
         state = job.get("stateprovince", "")
@@ -678,13 +660,10 @@ def _generate_html_report(  # Add new_job_ids argument
         new_indicator_html = '<span class="new-tag">NEW</span> ' if is_new else ""
         row_class = "job-row new-job" if is_new else "job-row"
 
-        # Inside the loop in _generate_html_report (around line 583)
-
         # --- Add Analysis Info ---
         analysis_html = ""
         analysis = job.get("match_analysis")  # analysis can be None or a dict
 
-        # *** ADJUSTED CHECK ***
         # Check if analysis is a dictionary AND does not contain the 'error' key
         if isinstance(analysis, dict) and "error" not in analysis:
             # Now we know analysis is a dict, safe to use .get()
@@ -730,7 +709,7 @@ def _generate_html_report(  # Add new_job_ids argument
                     '<p class="analysis-summary"><em>Tier 2 analysis not available.</em></p><hr>'
                 )
 
-            analysis_html = f"{reco_html}{score_badge}"  # Combine badge and score
+            analysis_html = f"{reco_html}{score_badge}"
 
         elif isinstance(analysis, dict) and "error" in analysis:
             # Handle the case where the analysis dict itself indicates an error
@@ -743,9 +722,6 @@ def _generate_html_report(  # Add new_job_ids argument
             )
             analysis_summary_text = ""  # No summary needed
 
-        # --- End Analysis Info ---
-
-        # Main job data row - Prepend analysis_html
         html_content += f"""
             <tr class="{row_class}" data-job-id="{idx}">
                 <td class="title-cell"><span class="expander">+</span> {analysis_html}{new_indicator_html}<a href="{job_url}" target="_blank">{title}</a></td>
@@ -755,9 +731,7 @@ def _generate_html_report(  # Add new_job_ids argument
                 <td>{posted_date_str}</td>
             </tr>"""
 
-        # Description row (hidden by default) - Add analysis summary
         description_html = job.get("description", "No description available.")
-        # Prepend the summary text generated earlier
         description_html = analysis_summary_text + description_html
 
         html_content += f"""
@@ -773,7 +747,6 @@ def _generate_html_report(  # Add new_job_ids argument
         </tbody>
     </table>
     <script>
-        // ... existing script ...
         document.addEventListener('DOMContentLoaded', function() {
             const jobRows = document.querySelectorAll('.job-row');
             jobRows.forEach(row => {
@@ -808,7 +781,6 @@ def _generate_html_report(  # Add new_job_ids argument
 def _find_latest_json_report(
     output_dir: Path, filename_prefix: str, state_filter: str
 ) -> Path | None:
-    # ... (implementation - looks ok) ...
     try:
         pattern = f"{filename_prefix}_{state_filter.lower()}_jobs_*.json"
         files = sorted(output_dir.glob(pattern), key=os.path.getmtime, reverse=True)
@@ -823,7 +795,6 @@ def _find_latest_json_report(
 
 
 def _load_job_ids_from_json(json_file_path: Path) -> set[str]:
-    # ... (implementation - looks ok) ...
     job_ids: set[str] = set()
     if not json_file_path or not json_file_path.exists():
         return job_ids
@@ -842,7 +813,6 @@ def _load_job_ids_from_json(json_file_path: Path) -> set[str]:
 def _run_git_command(
     command: list[str], cwd: Path, sensitive: bool = False
 ) -> tuple[bool, str, str]:
-    # ... (implementation - looks ok) ...
     cmd_display = " ".join(command) if not sensitive else f"{command[0]} [args hidden]"
     try:
         logger.debug(f"Running command: {cmd_display} in {cwd}")
@@ -879,8 +849,7 @@ def _run_git_command(
 
 def _commit_and_push_report(
     html_file_path: Path, timestamp: str, config: dict[str, Any]
-) -> None:  # Use Dict
-    # ... (implementation - looks ok, uses _run_git_command) ...
+) -> None:
     repo_dir = Path.cwd()
     commit_message = f"Update job report for {config.get('FILTER_STATE', 'N/A')} - {timestamp}"
     html_rel_path_str = str(html_file_path)  # Use the path relative to cwd directly
@@ -945,9 +914,8 @@ def save_job_results(
     config: dict[str, Any],
     analyzer: JobMatchAnalyzerV2 | None,
     new_job_ids: set[str],
-    analyze_all: bool = False,  # Add the argument here
+    analyze_all: bool = False,
     filename_prefix: str = "roberthalf",
-    llm_debug: bool = False,  # Add the llm_debug argument here
 ) -> None:
     """Save the final list of jobs to JSON and generate/commit/push an HTML report."""
     output_dir = OUTPUT_DIR
@@ -966,7 +934,6 @@ def save_job_results(
     tx_jobs = [job for job in jobs_list if job.get("stateprovince") == state_filter]
     remote_jobs = [job for job in jobs_list if job.get("remote", "").lower() == "yes"]
 
-    # --- Add 'is_new' flag ---
     for job in jobs_list:
         job["is_new"] = job.get("unique_job_number") in new_job_ids
 
@@ -984,23 +951,19 @@ def save_job_results(
         evaluated_count = 0
         for job in jobs_list:
             job_id = job.get("unique_job_number")
-            # *** THIS IS THE KEY CHANGE ***
-            # Analyze if it's new OR if test_mode is on OR if the analyze_all flag is passed
             should_analyze = job.get("is_new") or test_mode or analyze_all
 
             if should_analyze:
-                # Add flag status to debug log for clarity
                 logger.debug(
                     f"Analyzing job {job_id} (is_new={job.get('is_new', False)}, test_mode={test_mode}, analyze_all={analyze_all})..."
                 )
-                match_analysis = analyzer.analyze_job(job)  # Call the V2 analyzer
-                job["match_analysis"] = match_analysis  # Store the full analysis dict
+                match_analysis = analyzer.analyze_job(job)
+                job["match_analysis"] = match_analysis
                 if match_analysis and "error" not in match_analysis:
                     evaluated_count += 1
-                # Add a small delay between *full analyses* if needed
                 time.sleep(0.5)  # Shorter delay as main calls have internal waits
             else:
-                job["match_analysis"] = None  # Mark jobs not analyzed in this run
+                job["match_analysis"] = None
 
         logger.info(f"--- Finished AI Job Match Evaluation ({evaluated_count} jobs analyzed) ---")
     else:
@@ -1014,7 +977,7 @@ def save_job_results(
     json_filename = f"{filename_prefix}_{state_filter.lower()}_jobs_{timestamp_str}.json"
     json_output_file_path = output_dir / json_filename
     results_data = {
-        "jobs": jobs_list,  # Includes 'is_new' and 'match_analysis'
+        "jobs": jobs_list,
         "timestamp": iso_timestamp_str,
         f"total_{state_filter.lower()}_jobs": len(tx_jobs),
         "total_remote_jobs": len(remote_jobs),
@@ -1113,7 +1076,7 @@ def save_job_results(
                         )
                         score_str = f'<b><font color="{score_color}">({score:.0f}/100)</font></b> '
                     else:
-                        score_str = "<b>(ERR)</b> "  # Indicate score calc error
+                        score_str = "<b>(ERR)</b> "
 
                     if tier2 := analysis.get("tier2_result"):
                         summary = tier2.get("summary", "")
@@ -1127,7 +1090,7 @@ def save_job_results(
                         else:
                             reco_str = '<font color="#6c757d">Skip</font> '
                     else:
-                        summary_str = "\n  <i>Tier 2 analysis failed.</i>"  # Indicate T2 fail
+                        summary_str = "\n  <i>Tier 2 analysis failed.</i>"
                         reco_str = '<font color="#dc3545">Error</font> '
 
                 elif analysis and "error" in analysis:
@@ -1136,7 +1099,6 @@ def save_job_results(
                     reco_str = '<font color="#dc3545">Error</font> '
 
                 detail = f"• {reco_str}{score_str}{title} ({location})"
-                # Add pay rate
                 pay_min_str = job.get("payrate_min")
                 pay_max_str = job.get("payrate_max")
                 pay_period = job.get("payrate_period", "").lower()
@@ -1144,7 +1106,7 @@ def save_job_results(
                     with contextlib.suppress(ValueError, TypeError):
                         detail += f"\n  ${int(float(pay_min_str)):,} - ${int(float(pay_max_str)):,}/{pay_period}"
 
-                detail += summary_str  # Add summary
+                detail += summary_str
                 job_details_notify.append(detail)
 
             details_text_notify = "\n".join(job_details_notify)
@@ -1224,19 +1186,18 @@ def scrape_roberthalf_jobs(analyze_all: bool = False, llm_debug: bool = False) -
     start_time = time.time()
 
     # Initialize Analyzer *before* the main try block
-    analyzer: JobMatchAnalyzerV2 | None = None  # Type hint
+    analyzer: JobMatchAnalyzerV2 | None = None
     if config.get("MATCHING_ENABLED"):
         logger.info("AI Matching is enabled, initializing analyzer...")
         try:
-            # Pass the llm_debug flag to the analyzer
             analyzer = JobMatchAnalyzerV2(config, llm_debug=llm_debug)
-            # Crucially, check if the profile actually loaded within the analyzer
+
             if not analyzer.candidate_profile:
                 logger.error(
                     "Analyzer initialized, but profile loading failed. Disabling matching for this run."
                 )
                 analyzer = None  # Set analyzer to None if profile is missing
-        except ValueError as e:  # Catch API key error etc.
+        except ValueError as e:
             logger.error(f"Failed to initialize JobMatchAnalyzerV2: {e}. Matching disabled.")
         except Exception as e:
             logger.error(
@@ -1354,7 +1315,6 @@ def scrape_roberthalf_jobs(analyze_all: bool = False, llm_debug: bool = False) -
             analyzer,
             new_job_ids,
             analyze_all=analyze_all,
-            llm_debug=llm_debug,
         )
         append_job_data_to_csv(unique_job_list, CSV_FILE_PATH, existing_job_ids_csv)
 
@@ -1432,7 +1392,6 @@ def append_job_data_to_csv(
                 job_id = job.get("unique_job_number")
                 # Check if job_id exists AND if it's not already in the set read at the start
                 if job_id and job_id not in existing_job_ids:
-                    # Format Pay Rate carefully
                     pay_min_str = job.get("payrate_min")
                     pay_max_str = job.get("payrate_max")
                     pay_period = job.get("payrate_period", "")
@@ -1480,7 +1439,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--analyze-all",
-        action="store_true",  # Creates a boolean flag
+        action="store_true",
         help="Force AI analysis on ALL jobs found in this run, not just new ones (for testing).",
     )
     parser.add_argument(
@@ -1490,5 +1449,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # Call the main function, passing the value of the flag
     scrape_roberthalf_jobs(analyze_all=args.analyze_all, llm_debug=args.llm_debug)

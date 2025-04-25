@@ -1,9 +1,7 @@
-# filename: pushnotify.py
 #!/usr/bin/env python3
-
-import logging  # Import logging for consistent handling
+import logging
 import os
-from typing import Any, Literal  # Import Dict for type hint
+from typing import Any, Literal
 
 import requests
 
@@ -11,16 +9,15 @@ import requests
 # It will inherit level/handlers from the root logger configured in roberthalf_scraper.py
 logger = logging.getLogger(__name__)
 
-# Retrieve the API token and user keys from environment variables
-PUSHOVER_API_TOKEN: str = os.getenv("PUSHOVER_API_TOKEN")
-USER_KEYS: dict[str, str] = {
+PUSHOVER_API_TOKEN: str | None = os.getenv("PUSHOVER_API_TOKEN")
+USER_KEYS: dict[str, str | None] = {
     "Joe": os.getenv("PUSHOVER_USER_KEY_JOE"),
     "Katie": os.getenv("PUSHOVER_USER_KEY_KATIE"),
 }
 
 
 def send_pushover_notification(
-    message: str, user: Literal["Joe", "Katie", "All"] = "Joe", **kwargs: Any # Changed type hint for kwargs
+    message: str, user: Literal["Joe", "Katie", "All"] = "Joe", **kwargs: Any
 ) -> None:
     """
     Sends a notification via Pushover.
@@ -45,7 +42,6 @@ def send_pushover_notification(
         # Avoid sys.exit(1) if called as a library
         return
 
-    # Select the user keys
     target_user_keys = []
     if user == "All":
         if USER_KEYS.get("Joe"):
@@ -140,7 +136,6 @@ def send_pushover_notification(
 
 
 
-# Keep the __main__ block for potential command-line testing
 if __name__ == "__main__":
     # Add basic logging config if running standalone
     if not logging.getLogger().hasHandlers():

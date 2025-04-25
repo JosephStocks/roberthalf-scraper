@@ -4,7 +4,7 @@ import logging
 import time
 from datetime import UTC, datetime  # Use UTC alias
 from pathlib import Path
-from typing import Any  # Use Dict and Optional
+from typing import Any
 
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 
@@ -121,7 +121,7 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
         self.model_tier2 = config.get('MATCHING_MODEL_TIER2', 'gpt-4o-mini') # Consistent model choice
         self.final_threshold = config.get('MATCHING_THRESHOLD_FINAL', 75) # Used later for filtering notifications
 
-    def _load_profile(self, profile_path_str: str | None) -> dict[str, Any] | None: # Use Optional
+    def _load_profile(self, profile_path_str: str | None) -> dict[str, Any] | None:
         """Loads the candidate profile JSON."""
         if not profile_path_str:
             logger.error("Candidate profile path not configured.")
@@ -146,7 +146,7 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
             logger.error(f"Failed to load or parse candidate profile from {profile_path}: {e}")
             return None
 
-    def _call_openai_api(self, system_prompt: str, user_content: str, model: str, max_retries: int = 2, initial_delay: float = 5.0) -> dict[str, Any] | None: # Use Optional
+    def _call_openai_api(self, system_prompt: str, user_content: str, model: str, max_retries: int = 2, initial_delay: float = 5.0) -> dict[str, Any] | None:
         """Helper function to call OpenAI API with retries and JSON parsing."""
         if self.llm_debug:
             logger.debug(f"--- LLM Call Start ({model}) ---")
@@ -222,7 +222,7 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
              logger.debug(f"--- LLM Call End ({model}) - FAILED ---")
         return None
 
-    def _run_tier1_analysis(self, job_description: str) -> dict[str, Any] | None: # Use Optional
+    def _run_tier1_analysis(self, job_description: str) -> dict[str, Any] | None:
         """Runs the Tier 1 skill analysis."""
         if not self.candidate_profile: return None
         if self.llm_debug:
@@ -243,7 +243,7 @@ Return ONLY valid JSON. Do not repeat the skill list unless justifying the role 
             logger.debug("--- Tier 1 Analysis End ---")
         return result
 
-    def _run_tier2_analysis(self, job_description: str, tier1_result: dict[str, Any]) -> dict[str, Any] | None: # Use Optional
+    def _run_tier2_analysis(self, job_description: str, tier1_result: dict[str, Any]) -> dict[str, Any] | None:
         """Runs the Tier 2 holistic analysis, using Tier 1 results."""
         if not self.candidate_profile: return None
         if self.llm_debug:
