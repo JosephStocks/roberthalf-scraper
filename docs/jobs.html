@@ -1,84 +1,49 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Robert Half Job Report (TX) - 2025-05-04 09:03:43 CDT</title>
+    <title>Robert Half Job Report (TX) - 2025-05-04 11:03:27 CDT</title>
     <style>
         /* Basic styles from the old version */
-        body {
-            font-family: sans-serif;
-            margin: 20px;
-        }
-
-        h1 {
-            color: #333;
-        }
-
-        p {
-            color: #555;
-        }
-
+        body { font-family: sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        p { color: #555; }
         table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
         }
-
-        th,
-        td {
+        th, td {
             border: 1px solid #ddd;
             padding: 8px;
             text-align: left;
             vertical-align: top;
         }
-
-        th {
-            background-color: #f2f2f2;
-        }
-
-        tr:nth-child(even) {
-            background-color: #f9f9f9;
-        }
-
-        a {
-            color: #007bff;
-            text-decoration: none;
-        }
-
-        a:hover {
-            text-decoration: underline;
-        }
-
-        .pay-rate,
-        .location {
-            white-space: nowrap;
-        }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        a { color: #007bff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .pay-rate, .location { white-space: nowrap; }
 
         /* Styling for the expandable content */
         .job-row {
             cursor: pointer;
         }
-
         .job-row:hover {
-            background-color: #f0f8ff;
-            /* AliceBlue on hover */
+            background-color: #f0f8ff; /* AliceBlue on hover */
         }
-
         .job-description {
             padding: 15px;
             background-color: #fff;
             border-top: none;
             margin-top: 0;
         }
-
         .description-container {
             padding: 0;
             border-top: none;
             background-color: #fff;
         }
-
         .job-row .expander {
             display: inline-block;
             width: 20px;
@@ -87,22 +52,18 @@
             line-height: 20px;
             border-radius: 3px;
             margin-right: 8px;
-            background-color: #f2f2f2;
-            /* Light gray background for expander */
+            background-color: #f2f2f2; /* Light gray background for expander */
             font-weight: bold;
             font-size: 14px;
         }
 
         /* Styling for new job highlighting */
         .new-job .title-cell {
-            background-color: #f0fff0;
-            /* Honeydew for new job title cell */
+            background-color: #f0fff0; /* Honeydew for new job title cell */
         }
-
         .new-tag {
             display: inline-block;
-            background-color: #28a745;
-            /* Green background for NEW tag */
+            background-color: #28a745; /* Green background for NEW tag */
             color: white;
             padding: 2px 6px;
             font-size: 0.75em;
@@ -113,65 +74,25 @@
         }
 
         /* Styles for LLM analysis elements */
-        .score-badge {
-            /* Style for score */
-            display: inline-block;
-            padding: 2px 5px;
-            margin-right: 5px;
-            font-size: 0.8em;
-            border-radius: 4px;
-            color: white;
+        .score-badge { /* Style for score */
+            display: inline-block; padding: 2px 5px; margin-right: 5px;
+            font-size: 0.8em; border-radius: 4px; color: white;
         }
-
-        .score-high {
-            background-color: #28a745;
-        }
-
-        /* Green */
-        .score-medium {
-            background-color: #ffc107;
-            color: #333;
-        }
-
-        /* Yellow */
-        .score-low {
-            background-color: #6c757d;
-        }
-
-        /* Gray */
-        .recommendation {
-            font-weight: bold;
-            margin-right: 5px;
-        }
-
-        .rec-apply {
-            color: #28a745;
-        }
-
-        .rec-consider {
-            color: #ffc107;
-        }
-
-        .rec-skip {
-            color: #6c757d;
-        }
-
-        .analysis-summary {
-            font-style: italic;
-            color: #555;
-            font-size: 0.9em;
-            margin-top: 5px;
-        }
+        .score-high { background-color: #28a745; } /* Green */
+        .score-medium { background-color: #ffc107; color: #333; } /* Yellow */
+        .score-low { background-color: #6c757d; } /* Gray */
+        .recommendation { font-weight: bold; margin-right: 5px; }
+        .rec-apply { color: #28a745; }
+        .rec-consider { color: #ffc107; }
+        .rec-skip { color: #6c757d; }
+        .analysis-summary { font-style: italic; color: #555; font-size: 0.9em; margin-top: 5px; }
     </style>
 </head>
-
 <body>
     <h1>Robert Half Job Report</h1>
-    <p>Generated: 2025-05-04 09:03:43 CDT</p>
+    <p>Generated: 2025-05-04 11:03:27 CDT</p>
     <p>Filters: State = TX, Posted Within = PAST 24 HOURS</p>
-    <p>Found 0 jobs in TX and 0 remote jobs (Total Unique: 0). Identified <span
-            style="background-color: #f0fff0; padding: 1px 3px; border: 1px solid #ccc;">0 New Jobs</span> since last
-        CSV entry. API reported 2 total jobs matching period.</p>
+    <p>Found 0 jobs in TX and 0 remote jobs (Total Unique: 0). Identified <span style="background-color: #f0fff0; padding: 1px 3px; border: 1px solid #ccc;">0 New Jobs</span> since last CSV entry. API reported 0 total jobs matching period.</p>
 
     <table id="jobTable">
         <thead>
@@ -188,10 +109,10 @@
         </tbody>
     </table>
     <script>
-        document.addEventListener('DOMContentLoaded', function () {
+        document.addEventListener('DOMContentLoaded', function() {
             const jobRows = document.querySelectorAll('.job-row');
             jobRows.forEach(row => {
-                row.addEventListener('click', function (event) {
+                row.addEventListener('click', function(event) {
                     // Prevent toggling if clicking on the link itself
                     if (event.target.tagName === 'A') {
                         return;
@@ -201,18 +122,17 @@
                     const expander = this.querySelector('.expander');
 
                     if (descriptionRow && expander) { // Check if elements exist
-                        if (descriptionRow.style.display === 'none') {
+                         if (descriptionRow.style.display === 'none') {
                             descriptionRow.style.display = 'table-row';
                             expander.textContent = '-';
-                        } else {
+                         } else {
                             descriptionRow.style.display = 'none';
                             expander.textContent = '+';
-                        }
+                         }
                     }
                 });
             });
         });
     </script>
 </body>
-
 </html>
