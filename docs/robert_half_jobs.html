@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robert Half Job Report (TX) - 2025-05-04 16:54:44 CDT</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        h1, h2 { color: #333; }
+        p { color: #555; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        a { color: #007bff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .salary { white-space: nowrap; }
+        .job-id { font-family: monospace; font-size: 0.9em; color: #666; }
+
+        /* Styling for the expandable content */
+        .job-row {
+            cursor: pointer;
+        }
+        .job-row:hover {
+            background-color: #f0f8ff;
+        }
+        .job-description {
+            padding: 15px;
+            background-color: #fff;
+            border-top: none;
+            margin-top: 0;
+            max-height: 300px; /* Limit description height */
+            overflow-y: auto; /* Add scrollbar if needed */
+        }
+        .description-container {
+            padding: 0;
+            border-top: none;
+            background-color: #fff;
+        }
+        .job-row .expander {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            text-align: center;
+            line-height: 20px;
+            border-radius: 3px;
+            margin-right: 8px;
+            background-color: #f2f2f2;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        /* Styling for new job highlighting */
+        .new-job .title-cell {
+            background-color: #f0fff0; /* Light green background for new jobs */
+        }
+        .new-tag {
+            display: inline-block;
+            background-color: #28a745;
+            color: white;
+            padding: 2px 6px;
+            font-size: 0.75em;
+            font-weight: bold;
+            border-radius: 4px;
+            margin-right: 5px;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+    <h1>Robert Half Job Report</h1>
+    <p>Generated: 2025-05-04 16:54:44 CDT</p>
+    <p>State Filter: TX | Post Period: PAST_24_HOURS</p>
+    <p>Found 0 jobs (0 new).</p>
+    <p>State (TX): 0 jobs | Remote (US): 0 jobs</p>
+
+    <h2>Jobs Found</h2>
+    <table id="jobTable">
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Location</th>
+                <th>Pay Rate</th>
+                <th>Job ID</th>
+                <th>Posted Date</th>
+            </tr>
+        </thead>
+        <tbody>
+<tr><td colspan="5">No jobs found matching the criteria.</td></tr>
+        </tbody>
+    </table>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const jobRows = document.querySelectorAll('.job-row');
+            jobRows.forEach(row => {
+                row.addEventListener('click', function(event) {
+                    // Prevent toggling if clicking on the link itself
+                    if (event.target.tagName === 'A') {
+                        return;
+                    }
+                    const jobId = this.getAttribute('data-job-id');
+                    const descriptionRow = document.getElementById('job-' + jobId);
+                    const expander = this.querySelector('.expander');
+
+                    if (descriptionRow && expander) { // Check if elements exist
+                         if (descriptionRow.style.display === 'none') {
+                            descriptionRow.style.display = 'table-row';
+                            expander.textContent = '-';
+                         } else {
+                            descriptionRow.style.display = 'none';
+                            expander.textContent = '+';
+                         }
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>

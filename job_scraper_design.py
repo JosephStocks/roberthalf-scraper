@@ -148,7 +148,8 @@ class Config:
         self._config["KDP_USERNAME"] = self._get_env("KDP_USERNAME", "")
         self._config["KDP_PASSWORD"] = self._get_env("KDP_PASSWORD", "")
         self._config["KDP_LOCATION"] = self._get_env("KDP_LOCATION", "")
-        self._config["KDP_KEYWORDS"] = self._get_env("KDP_KEYWORDS", "")
+        self._config["KDP_CATEGORY"] = self._get_env("KDP_CATEGORY", "")  # Category filter (e.g., "Supply Chain", "Sales")
+        self._config["KDP_JOB_LEVEL"] = self._get_env("KDP_JOB_LEVEL", "")  # Job Level filter (e.g., "Manager", "Individual Contributor")
 
         # AI matching configuration (for any job site)
         self._config["MATCHING_ENABLED"] = self._get_env_bool("MATCHING_ENABLED", False)
@@ -1469,7 +1470,8 @@ class KeurigDrPepperScraper(JobScraper):
         self.username = config.get("KDP_USERNAME", "")
         self.password = config.get("KDP_PASSWORD", "")
         self.location_filter = config.get("KDP_LOCATION", "")
-        self.keywords = config.get("KDP_KEYWORDS", "")
+        self.category_filter = config.get("KDP_CATEGORY", "")  # Category filter (e.g., "Supply Chain", "Sales")
+        self.job_level_filter = config.get("KDP_JOB_LEVEL", "")  # Job Level filter (e.g., "Manager", "Individual Contributor")
 
         # KDP specific constants
         self.base_url = "https://careers.keurigdrpepper.com"
@@ -1819,31 +1821,174 @@ class KeurigDrPepperScraper(JobScraper):
                 # Navigate to search page
                 self.logger.info(f"Navigating to search page: {self.search_url}")
                 page.goto(
-                    self.search_url, wait_until="domcontentloaded", timeout=self.browser_timeout_ms
+                    self.search_url, wait_until="networkidle", timeout=self.browser_timeout_ms
                 )
                 self.add_human_delay(2, 3)
 
                 # Apply filters if specified
                 if self.location_filter:
                     self.logger.info(f"Applying location filter: {self.location_filter}")
-                    location_input = page.locator('input[placeholder="Location"]')
-                    location_input.click()
-                    location_input.fill(self.location_filter)
+                    
+                    # First handle any cookie consent dialog that might appear
+                    try:
+                        cookie_accept = page.locator('button:has-text("Accept")').first
+                        if cookie_accept and cookie_accept.is_visible(timeout=2000):
+                            cookie_accept.click()
+                            self.add_human_delay(1, 2)
+                    except Exception:
+                        self.logger.debug("No cookie dialog found or error handling it")
+                    
+                    # Wait for page to be fully loaded
+                    page.wait_for_load_state("networkidle", timeout=self.browser_timeout_ms)
+                    self.add_human_delay(2, 3)
+                    
+                    # Using simpler selectors based on visible elements from snapshot
+                    try:
+                        # Find the location input by looking for the paragraph containing "Location" label
+                        # Then get the combobox within that paragraph
+                        location_paragraph = page.locator('p:has-text("Location")').first
+                        location_input = location_paragraph.locator('[role="combobox"]').first
+                        
+                        self.logger.info("Clicking location input field")
+                        location_input.click(timeout=5000)
+                        self.add_human_delay(0.5, 1)
+                        
+                        # Clear any existing text
+                        location_input.fill("")
+                        self.add_human_delay(0.5, 1)
+                        
+                        # Type slowly to trigger the dropdown
+                        city_part = self.location_filter.split(',')[0].strip() if ',' in self.location_filter else self.location_filter
+                        self.logger.info(f"Typing location slowly: {city_part}")
+                        location_input.press_sequentially(city_part, delay=100)
+                        self.add_human_delay(2, 3)
+                        
+                        # Wait for and select from dropdown
+                        try:
+                            self.logger.info("Looking for location dropdown")
+                            # Look for dropdown suggestions
+                            dropdown = page.locator('div[role="listbox"]').first
+                            if dropdown.is_visible(timeout=3000):
+                                self.logger.info("Location dropdown visible")
+                                
+                                # Find all options in the dropdown
+                                options = page.locator('div[role="listbox"] a').all()
+                                
+                                if options:
+                                    # Try to find the exact match first
+                                    exact_match = None
+                                    for option in options:
+                                        text = option.text_content()
+                                        if text and self.location_filter.lower() in text.lower():
+                                            exact_match = option
+                                            break
+                                    
+                                    if exact_match:
+                                        self.logger.info(f"Found matching location: {exact_match.text_content()}")
+                                        exact_match.click()
+                                    else:
+                                        # Take first option if no exact match
+                                        self.logger.info(f"No exact match, selecting first option: {options[0].text_content()}")
+                                        options[0].click()
+                                else:
+                                    self.logger.warning("No options found in dropdown")
+                            else:
+                                self.logger.warning("Location dropdown not visible after typing")
+                        except Exception as e:
+                            self.logger.warning(f"Error handling location dropdown: {e}")
+                        
+                        self.add_human_delay(1, 2)
+                        
+                        # Ensure the radius is enabled and set
+                        try:
+                            radius_select = page.locator('select[aria-label="Radius"]')
+                            if radius_select and not radius_select.is_disabled():
+                                radius_select.select_option("50")
+                                self.logger.debug("Set radius to 50 miles")
+                        except Exception as e:
+                            self.logger.debug(f"Could not set radius: {e}")
+                    except Exception as e:
+                        self.logger.error(f"Error interacting with location field: {e}")
+                        raise RuntimeError(f"Cannot interact with location field: {e}")
+                        
                     self.add_human_delay(1, 2)
 
-                if self.keywords:
-                    self.logger.info(f"Applying keyword filter: {self.keywords}")
-                    keyword_input = page.locator('input[placeholder="Search Jobs by Keyword"]')
-                    keyword_input.click()
-                    keyword_input.fill(self.keywords)
-                    self.add_human_delay(1, 2)
-
-                # Click search button
-                search_button = page.locator('button:has-text("Search Jobs")')
+                # Click search button to apply location filter first
+                search_button = page.locator('button:has-text("Search Jobs")').first
+                self.logger.info("Clicking search button to apply initial filters")
                 search_button.click()
-                self.logger.info("Search submitted, waiting for results...")
                 page.wait_for_load_state("networkidle", timeout=self.browser_timeout_ms)
-                self.add_human_delay(3, 5)
+                self.add_human_delay(2, 3)
+                
+                # Now apply Category filter if specified
+                if self.category_filter:
+                    self.logger.info(f"Applying category filter: {self.category_filter}")
+                    
+                    # Click on Category filter button to expand options
+                    try:
+                        category_button = page.locator('button:has-text("Category ")').first
+                        category_button.click(timeout=5000)
+                        self.add_human_delay(1, 2)
+                        
+                        # Find and click the matching category checkbox option directly by text
+                        category_item = page.locator(f'li:has-text("{self.category_filter}")').first
+                        category_checkbox = category_item.locator('input[type="checkbox"]').first
+                        
+                        try:
+                            category_checkbox.click(timeout=3000)
+                            self.logger.info(f"Selected category: {self.category_filter}")
+                            self.add_human_delay(1, 2)
+                        except Exception as e:
+                            self.logger.warning(f"Failed to click category checkbox: {e}")
+                            # Try clicking the list item instead
+                            try:
+                                category_item.click(timeout=3000)
+                                self.logger.info(f"Selected category by clicking list item: {self.category_filter}")
+                            except Exception as item_err:
+                                self.logger.error(f"Failed to click category list item: {item_err}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to apply category filter: {e}")
+                
+                # Apply Job Level filter if specified
+                if self.job_level_filter:
+                    self.logger.info(f"Applying job level filter: {self.job_level_filter}")
+                    
+                    # Click on Job Level filter button to expand options
+                    try:
+                        job_level_button = page.locator('button:has-text("Job Level ")').first
+                        job_level_button.click(timeout=5000)
+                        self.add_human_delay(1, 2)
+                        
+                        # Find and click the matching job level checkbox option directly by text
+                        job_level_item = page.locator(f'li:has-text("{self.job_level_filter}")').first
+                        job_level_checkbox = job_level_item.locator('input[type="checkbox"]').first
+                        
+                        try:
+                            job_level_checkbox.click(timeout=3000)
+                            self.logger.info(f"Selected job level: {self.job_level_filter}")
+                            self.add_human_delay(1, 2)
+                        except Exception as e:
+                            self.logger.warning(f"Failed to click job level checkbox: {e}")
+                            # Try clicking the list item instead
+                            try:
+                                job_level_item.click(timeout=3000)
+                                self.logger.info(f"Selected job level by clicking list item: {self.job_level_filter}")
+                            except Exception as item_err:
+                                self.logger.error(f"Failed to click job level list item: {item_err}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to apply job level filter: {e}")
+
+                # If any category or job level filter was applied, click search again
+                if self.category_filter or self.job_level_filter:
+                    self.logger.info("Clicking search button to apply additional filters")
+                    try:
+                        search_button = page.locator('button:has-text("Search Jobs")').first
+                        search_button.click()
+                        self.logger.info("Search with filters submitted, waiting for results...")
+                        page.wait_for_load_state("networkidle", timeout=self.browser_timeout_ms)
+                        self.add_human_delay(3, 5)
+                    except Exception as e:
+                        self.logger.error(f"Failed to click search button for filters: {e}")
 
                 # Get total job count
                 total_jobs_text = page.locator('h1:has-text("Jobs")').text_content() or "0 Jobs"
@@ -1863,170 +2008,75 @@ class KeurigDrPepperScraper(JobScraper):
                     job_links = page.locator('a[href^="/en/job/"]').all()
                     self.logger.info(f"Found {len(job_links)} job links on page {current_page}")
 
-                    for job_link in job_links:
+                    for i, job_link in enumerate(job_links):
                         try:
-                            # Extract job info from listing
-                            href = job_link.get_attribute("href") or ""
-                            job_id = self._extract_job_id_from_url(href)
-
-                            # Skip if already processed or if not a valid job link
-                            if not job_id or href.endswith("#"):
-                                continue
-
-                            # Check if new job
-                            is_new = job_id not in self.existing_job_ids
-
-                            # Extract visible details from listing
-                            title_element = job_link.locator("h2").first
-                            title = title_element.text_content() if title_element else None
-                            # Provide a default if title is None or empty
-                            if not title:
-                                title = "N/A - Title Not Found"
-                                self.logger.warning(
-                                    f"Could not extract title for job ID {job_id} ({href})"
-                                )
-
-                            # Extract location and category if available
-                            location = "Unknown"
-                            job_category = "Not specified"
-
-                            text_content = job_link.text_content() or ""
-                            segments = [s.strip() for s in text_content.split("\n") if s.strip()]
-
-                            if len(segments) >= 3:
-                                title = segments[0]
-                                location = segments[1]
-                                job_category = segments[2]
-
-                            # Navigate to job detail page
-                            full_url = f"{self.base_url}{href}"
-
-                            self.logger.info(f"Getting details for job: {title} ({job_id})")
-
-                            # Open job in new tab
-                            job_page = context.new_page()
-                            job_page.goto(
-                                full_url, wait_until="networkidle", timeout=self.browser_timeout_ms
-                            )
-                            self.add_human_delay(2, 3)
-
-                            # Extract detailed job information
-                            job_level = "Not specified"
-                            position_type = "Not specified"
-                            salary = "Not specified"
-                            description = ""
-                            requirements = []
-
-                            # Job level
-                            job_level_element = job_page.locator(
-                                'div:has-text("Job Level:") >> nth=0'
-                            ).last
-                            if job_level_element:
-                                job_level_text = job_level_element.text_content() or ""
-                                if ":" in job_level_text:
-                                    job_level = job_level_text.split(":", 1)[1].strip()
-                                else:
-                                     job_level = (
-                                         job_level_text.strip()
-                                     )  # Handle cases without ':' like just the level name
-
-                            # Position type
-                            position_type_element = job_page.locator(
-                                'div:has-text("Position Type:") >> nth=0'
-                            ).last
-                            if position_type_element:
-                                position_type_text = position_type_element.text_content() or ""
-                                if ":" in position_type_text:
-                                    position_type = position_type_text.split(":", 1)[1].strip()
-                                else:
-                                     position_type = (
-                                         position_type_text.strip()
-                                     )  # Handle cases without ':'
-
-                            # Description - main content
-                            description_element = job_page.locator(".job-description").first
-                            if description_element:
-                                description = description_element.inner_html() or ""
-
-                                # Extract requirements from description if available
-                                requirements_section = job_page.locator(
-                                    'strong:has-text("Requirements:")'
-                                ).first
-                                if requirements_section:
-                                    # Find the nearest list
-                                    req_list = requirements_section.locator(
-                                        "xpath=./following::ul[1]"
-                                    ).first
-                                    if req_list:
-                                        req_items = req_list.locator("li").all()
-                                        requirements = [
-                                            item.text_content() or ""
-                                            for item in req_items
-                                            if item.text_content()
-                                        ]
-                                    else:
-                                         # Try finding requirements in paragraphs after the heading
-                                        req_paras = requirements_section.locator(
-                                            "xpath=./following-sibling::p"
-                                        ).all()
-                                        requirements = [
-                                            p.text_content() or ""
-                                            for p in req_paras
-                                            if p.text_content()
-                                        ]
-
-                            # Salary info - may be in "Total Rewards" section
-                            salary_element = job_page.locator(
-                                'text="Total Rewards:" >> xpath=./following::*[1]'
-                            ).first
-                            if salary_element:
-                                salary = salary_element.text_content() or "Not specified"
-                            else:
-                                # Fallback: Look for salary info within the description text
-                                salary_patterns = ["salary", "pay range", "compensation"]
-                                if description_element:
-                                    desc_text_content = description_element.text_content()
-                                    if desc_text_content: # Check if not None before lower()
-                                        desc_text_lower = desc_text_content.lower()
-                                        for pattern in salary_patterns:
-                                            if pattern in desc_text_lower:
-                                                # Very basic check, might indicate presence
-                                                salary = "Mentioned in description (details vary)"
-                                                break
-
-                            # Create job object
-                            kdp_job = KeurigDrPepperJob(
-                                job_id=job_id,
-                                title=title,  # Already handled None case above
-                                company="Keurig Dr Pepper",
-                                location=location,
-                                date_posted=datetime.now(UTC).strftime(
-                                    "%Y-%m-%d"
-                                ),  # No explicit date on site
-                                url=full_url,
-                                description=description,
-                                salary=salary,
-                                job_type=position_type,
-                                is_new=is_new,
-                                is_remote="Remote" in location,
-                                job_category=job_category,
-                                job_level=job_level,
-                                position_type=position_type,
-                                requirements=requirements,
-                                status=JobStatus.NEW if is_new else JobStatus.EXISTING,
-                            )
-
-                            kdp_jobs.append(kdp_job)
-
-                            # Close job detail page
-                            job_page.close()
-
-                            # Add delay between job details
-                            self.add_human_delay(1, 2)
-
-                        except Exception as job_err:
-                            self.logger.error(f"Error processing job link: {job_err}")
-                            continue
+                            # Extract job title directly from the link
+                            job_title_el = job_link.locator("h2").first
+                            job_title = job_title_el.text_content(timeout=5000) if job_title_el else "Unknown Title"
+                            
+                            # Extract job location from the generic element immediately after the h2
+                            job_location_el = job_link.locator("generic").first
+                            job_location = job_location_el.text_content(timeout=5000) if job_location_el else "Unknown Location"
+                            
+                            # Extract category from the second generic element
+                            job_category_el = job_link.locator("generic").nth(1)
+                            job_category = job_category_el.text_content(timeout=5000) if job_category_el else "Unknown Category"
+                            
+                            # Extract job ID from the URL
+                            href = job_link.get_attribute("href")
+                            job_id = href.split("/")[-1] if href and "/" in href else "unknown"
+                            
+                            self.logger.info(f"Getting details for job: {job_title} ({job_id})")
+                            
+                            # Open job detail in a new page
+                            with page.context.new_page() as job_page:
+                                job_url = f"{self.base_url}{href}"
+                                job_page.goto(job_url, wait_until="domcontentloaded", timeout=self.browser_timeout_ms)
+                                self.add_human_delay(2, 3)
+                                
+                                # Extract job details
+                                try:
+                                    # Get job description
+                                    description_el = job_page.locator('.job-description').first
+                                    description = description_el.inner_html(timeout=10000) if description_el else ""
+                                    
+                                    # Get job level
+                                    job_level = ""
+                                    try:
+                                        level_el = job_page.locator('div:has-text("Job Level:")').first
+                                        if level_el:
+                                            level_text = level_el.text_content(timeout=5000)
+                                            if level_text and ":" in level_text:
+                                                job_level = level_text.split(":", 1)[1].strip()
+                                    except Exception as level_err:
+                                        self.logger.debug(f"Could not extract job level: {level_err}")
+                                    
+                                    # Create job object
+                                    job = KeurigDrPepperJob(
+                                        job_id=job_id,
+                                        title=job_title or "Unknown Title",
+                                        company="Keurig Dr Pepper",
+                                        location=job_location or "Unknown Location",
+                                        date_posted=datetime.now().strftime("%Y-%m-%d"),
+                                        url=job_url or "",
+                                        description=description or "",
+                                        job_category=job_category or "Uncategorized",
+                                        job_level=job_level or "",
+                                        position_type="",
+                                        requirements=[],
+                                        is_new=True,
+                                        status=JobStatus.NEW
+                                    )
+                                    
+                                    # Add job to results
+                                    kdp_jobs.append(job)
+                                    self.logger.debug(f"Added job: {job_title} - {job_location}")
+                                    
+                                except Exception as detail_err:
+                                    self.logger.warning(f"Error extracting job details: {detail_err}")
+                        
+                        except Exception as e:
+                            self.logger.error(f"Error processing job link {i}: {e}")
 
                     # Check if there are more pages
                     if current_page < total_pages:
@@ -2208,7 +2258,7 @@ class KeurigDrPepperScraper(JobScraper):
 <body>
     <h1>Keurig Dr Pepper Job Report</h1>
     <p>Generated: {formatted_timestamp}</p>
-    <p>Filters: Location = "{self.location_filter or 'Any'}", Keywords = "{self.keywords or 'Any'}"</p>
+    <p>Filters: Location = "{self.location_filter or 'Any'}", Keywords = "{self.category_filter or 'Any'}", Job Level = "{self.job_level_filter or 'Any'}"</p>
     <p>Found {len(kdp_jobs)} jobs, {sum(1 for job in kdp_jobs if job.is_new)} are new.</p>
 
     <h2>Jobs by Category</h2>
