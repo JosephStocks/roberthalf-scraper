@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -1849,69 +1850,77 @@ class KeurigDrPepperScraper(JobScraper):
                         location_paragraph = page.locator('p:has-text("Location")').first
                         location_input = location_paragraph.locator('[role="combobox"]').first
                         
-                        self.logger.info("Clicking location input field")
-                        location_input.click(timeout=5000)
-                        self.add_human_delay(0.5, 1)
+                        self.logger.info("Clicking location input field to focus")
+                        location_input.click(timeout=5000) # Ensure focus
+                        self.add_human_delay(0.5, 1.0)
                         
                         # Clear any existing text
+                        self.logger.info("Clearing location input field")
                         location_input.fill("")
-                        self.add_human_delay(0.5, 1)
+                        self.add_human_delay(0.5, 1.0)
                         
                         # Type slowly to trigger the dropdown
                         city_part = self.location_filter.split(',')[0].strip() if ',' in self.location_filter else self.location_filter
                         self.logger.info(f"Typing location slowly: {city_part}")
-                        location_input.press_sequentially(city_part, delay=100)
-                        self.add_human_delay(2, 3)
+                        location_input.press_sequentially(city_part, delay=120) # Slightly increased delay between key presses
+                        self.add_human_delay(1.0, 1.5) # Wait a bit after typing finishes
                         
                         # Wait for and select from dropdown
+                        dropdown_interaction_successful = False
                         try:
-                            self.logger.info("Looking for location dropdown")
-                            # Look for dropdown suggestions
-                            dropdown = page.locator('div[role="listbox"]').first
-                            if dropdown.is_visible(timeout=3000):
-                                self.logger.info("Location dropdown visible")
+                            self.logger.info("Explicitly waiting for location dropdown to be visible")
+                            dropdown_locator = page.locator('div[role="listbox"]')
+                            dropdown_locator.wait_for(state="visible", timeout=5000) # Explicit wait
+                            
+                            self.logger.info("Location dropdown is visible")
+                            options = dropdown_locator.locator('a').all()
+                            
+                            if options:
+                                exact_match_option = None
+                                desired_location_text = self.location_filter.lower()
                                 
-                                # Find all options in the dropdown
-                                options = page.locator('div[role="listbox"] a').all()
+                                for option_element in options:
+                                    text_content = option_element.text_content()
+                                    if text_content and desired_location_text in text_content.lower():
+                                        exact_match_option = option_element
+                                        break 
                                 
-                                if options:
-                                    # Try to find the exact match first
-                                    exact_match = None
-                                    for option in options:
-                                        text = option.text_content()
-                                        if text and self.location_filter.lower() in text.lower():
-                                            exact_match = option
-                                            break
-                                    
-                                    if exact_match:
-                                        self.logger.info(f"Found matching location: {exact_match.text_content()}")
-                                        exact_match.click()
-                                    else:
-                                        # Take first option if no exact match
-                                        self.logger.info(f"No exact match, selecting first option: {options[0].text_content()}")
-                                        options[0].click()
+                                if exact_match_option:
+                                    self.logger.info(f"Found matching location in dropdown: {exact_match_option.text_content()}")
+                                    exact_match_option.click()
+                                    self.logger.info("Clicked matching location from dropdown.")
+                                    dropdown_interaction_successful = True
                                 else:
-                                    self.logger.warning("No options found in dropdown")
+                                    self.logger.warning(f"No exact match for '{self.location_filter}' found in dropdown. Attempting to use first option.")
+                                    options[0].click() # Click first if no exact match
+                                    self.logger.info(f"Clicked first available option: {options[0].text_content()}")
+                                    dropdown_interaction_successful = True
                             else:
-                                self.logger.warning("Location dropdown not visible after typing")
+                                self.logger.warning("No options found in dropdown even after waiting.")
                         except Exception as e:
-                            self.logger.warning(f"Error handling location dropdown: {e}")
+                            self.logger.warning(f"Location dropdown did not appear or error selecting: {e}. Proceeding with typed text.")
                         
-                        self.add_human_delay(1, 2)
+                        self.add_human_delay(1.5, 2.5)
+
+                        # Ensure the radius is enabled and set, especially if dropdown interaction happened
+                        if dropdown_interaction_successful: # Or always try if appropriate
+                            try:
+                                radius_select = page.locator('select[aria-label="Radius"]')
+                                if radius_select.is_enabled(timeout=2000): # Check if enabled before selecting
+                                    radius_select.select_option("50")
+                                    self.logger.info("Set radius to 50 miles")
+                                else:
+                                    self.logger.debug("Radius select not enabled or not found shortly after location selection.")
+                            except Exception as e:
+                                self.logger.debug(f"Could not set radius: {e}")
+                        else:
+                            self.logger.info("Skipping radius setting as dropdown interaction was not confirmed successful.")
+                            
+                    except Exception as e: # Outer exception for the whole location block
+                        self.logger.error(f"A critical error occurred while interacting with the location filter: {e}")
+                        raise RuntimeError(f"Cannot interact with location filter: {e}")
                         
-                        # Ensure the radius is enabled and set
-                        try:
-                            radius_select = page.locator('select[aria-label="Radius"]')
-                            if radius_select and not radius_select.is_disabled():
-                                radius_select.select_option("50")
-                                self.logger.debug("Set radius to 50 miles")
-                        except Exception as e:
-                            self.logger.debug(f"Could not set radius: {e}")
-                    except Exception as e:
-                        self.logger.error(f"Error interacting with location field: {e}")
-                        raise RuntimeError(f"Cannot interact with location field: {e}")
-                        
-                    self.add_human_delay(1, 2)
+                    self.add_human_delay(1, 2) # Original delay after the entire location block
 
                 # Click search button to apply location filter first
                 search_button = page.locator('button:has-text("Search Jobs")').first
@@ -1922,7 +1931,8 @@ class KeurigDrPepperScraper(JobScraper):
                 
                 # Now apply Category filter if specified
                 if self.category_filter:
-                    self.logger.info(f"Applying category filter: {self.category_filter}")
+                    raw_category_filter = self.category_filter.strip('"')
+                    self.logger.info(f"Applying category filter: {raw_category_filter}")
                     
                     # Click on Category filter button to expand options
                     try:
@@ -1930,53 +1940,71 @@ class KeurigDrPepperScraper(JobScraper):
                         category_button.click(timeout=5000)
                         self.add_human_delay(1, 2)
                         
-                        # Find and click the matching category checkbox option directly by text
-                        category_item = page.locator(f'li:has-text("{self.category_filter}")').first
-                        category_checkbox = category_item.locator('input[type="checkbox"]').first
-                        
+                        # Find the label/text element, then its parent li, then the checkbox
                         try:
-                            category_checkbox.click(timeout=3000)
-                            self.logger.info(f"Selected category: {self.category_filter}")
-                            self.add_human_delay(1, 2)
+                            # Find the text element (label or span) that exactly matches the filter string
+                            # This assumes the text is directly visible and unique enough.
+                            text_element = page.get_by_text(raw_category_filter, exact=True).first
+                            text_element.wait_for(state="visible", timeout=3000) # Ensure text element is visible
+
+                            # Get the parent list item (li)
+                            # XPath to find the closest ancestor li element
+                            category_item_li = text_element.locator("xpath=ancestor::li[1]").first 
+
+                            # Find the checkbox within this list item
+                            category_checkbox = category_item_li.locator('input[type="checkbox"]').first
+                            
+                            if category_checkbox.is_visible(timeout=1000):
+                                category_checkbox.click()
+                                self.logger.info(f"Selected category: {raw_category_filter}")
+                                self.add_human_delay(1, 2)
+                            else:
+                                self.logger.warning(f"Category checkbox for '{raw_category_filter}' found but not visible. Attempting to click text element as fallback.")
+                                text_element.click() # Fallback: click the text element itself
+                                self.logger.info(f"Clicked text element for category: {raw_category_filter}")
+                                
+                        except PlaywrightTimeoutError:
+                            self.logger.error(f"Timeout finding or interacting with category filter elements for: {raw_category_filter}")
                         except Exception as e:
-                            self.logger.warning(f"Failed to click category checkbox: {e}")
-                            # Try clicking the list item instead
-                            try:
-                                category_item.click(timeout=3000)
-                                self.logger.info(f"Selected category by clicking list item: {self.category_filter}")
-                            except Exception as item_err:
-                                self.logger.error(f"Failed to click category list item: {item_err}")
+                            self.logger.error(f"Error selecting category '{raw_category_filter}': {e}")
+
                     except Exception as e:
-                        self.logger.warning(f"Failed to apply category filter: {e}")
-                
+                        self.logger.warning(f"Failed to expand or apply category filter: {e}")
+
                 # Apply Job Level filter if specified
                 if self.job_level_filter:
-                    self.logger.info(f"Applying job level filter: {self.job_level_filter}")
+                    raw_job_level_filter = self.job_level_filter.strip('"')
+                    self.logger.info(f"Applying job level filter: {raw_job_level_filter}")
                     
-                    # Click on Job Level filter button to expand options
                     try:
                         job_level_button = page.locator('button:has-text("Job Level ")').first
                         job_level_button.click(timeout=5000)
                         self.add_human_delay(1, 2)
                         
-                        # Find and click the matching job level checkbox option directly by text
-                        job_level_item = page.locator(f'li:has-text("{self.job_level_filter}")').first
-                        job_level_checkbox = job_level_item.locator('input[type="checkbox"]').first
-                        
+                        # Find the label/text element, then its parent li, then the checkbox
                         try:
-                            job_level_checkbox.click(timeout=3000)
-                            self.logger.info(f"Selected job level: {self.job_level_filter}")
-                            self.add_human_delay(1, 2)
+                            text_element = page.get_by_text(raw_job_level_filter, exact=True).first
+                            text_element.wait_for(state="visible", timeout=3000)
+
+                            job_level_item_li = text_element.locator("xpath=ancestor::li[1]").first
+                            job_level_checkbox = job_level_item_li.locator('input[type="checkbox"]').first
+                            
+                            if job_level_checkbox.is_visible(timeout=1000):
+                                job_level_checkbox.click()
+                                self.logger.info(f"Selected job level: {raw_job_level_filter}")
+                                self.add_human_delay(1, 2)
+                            else:
+                                self.logger.warning(f"Job level checkbox for '{raw_job_level_filter}' found but not visible. Attempting to click text element.")
+                                text_element.click()
+                                self.logger.info(f"Clicked text element for job level: {raw_job_level_filter}")
+                                
+                        except PlaywrightTimeoutError:
+                            self.logger.error(f"Timeout finding or interacting with job level filter elements for: {raw_job_level_filter}")
                         except Exception as e:
-                            self.logger.warning(f"Failed to click job level checkbox: {e}")
-                            # Try clicking the list item instead
-                            try:
-                                job_level_item.click(timeout=3000)
-                                self.logger.info(f"Selected job level by clicking list item: {self.job_level_filter}")
-                            except Exception as item_err:
-                                self.logger.error(f"Failed to click job level list item: {item_err}")
+                            self.logger.error(f"Error selecting job level '{raw_job_level_filter}': {e}")
+                            
                     except Exception as e:
-                        self.logger.warning(f"Failed to apply job level filter: {e}")
+                        self.logger.warning(f"Failed to expand or apply job level filter: {e}")
 
                 # If any category or job level filter was applied, click search again
                 if self.category_filter or self.job_level_filter:
@@ -2009,18 +2037,36 @@ class KeurigDrPepperScraper(JobScraper):
                     self.logger.info(f"Found {len(job_links)} job links on page {current_page}")
 
                     for i, job_link in enumerate(job_links):
+                        job_title, job_location, job_category = "Unknown Title", "Unknown Location", "Unknown Category"
                         try:
-                            # Extract job title directly from the link
-                            job_title_el = job_link.locator("h2").first
-                            job_title = job_title_el.text_content(timeout=5000) if job_title_el else "Unknown Title"
-                            
-                            # Extract job location from the generic element immediately after the h2
-                            job_location_el = job_link.locator("generic").first
-                            job_location = job_location_el.text_content(timeout=5000) if job_location_el else "Unknown Location"
-                            
-                            # Extract category from the second generic element
-                            job_category_el = job_link.locator("generic").nth(1)
-                            job_category = job_category_el.text_content(timeout=5000) if job_category_el else "Unknown Category"
+                            # Extract job title
+                            job_title_el = job_link.locator("> h2").first
+                            if job_title_el.is_visible(timeout=1500):
+                                job_title = job_title_el.text_content() or "Unknown Title (empty text)"
+                            else:
+                                self.logger.debug(f"Job link {i}: Title H2 not visible.")
+                                # Try to get title from the link's aria-label or text if H2 fails
+                                link_text = job_link.text_content()
+                                if link_text and len(link_text.split(' ')) > 2: # Heuristic for a title-like string
+                                    job_title = link_text.split('\n')[0].strip() # Often titles are first line of link text
+                                    self.logger.debug(f"Job link {i}: Using link text as fallback title: {job_title}")
+                                else:    
+                                    self.logger.warning(f"Job link {i}: Title H2 not found/visible, and link text not suitable. Skipping.")
+                                    continue
+
+                            # Extract job location
+                            job_location_el = job_link.locator("> generic").nth(0)
+                            if job_location_el.is_visible(timeout=1000):
+                                job_location = job_location_el.text_content() or "Unknown Location (empty text)"
+                            else:
+                                self.logger.debug(f"Job link {i} (Title: {job_title}): Location element not visible.")
+
+                            # Extract category
+                            job_category_el = job_link.locator("> generic").nth(1)
+                            if job_category_el.is_visible(timeout=1000):
+                                job_category = job_category_el.text_content() or "Unknown Category (empty text)"
+                            else:
+                                self.logger.debug(f"Job link {i} (Title: {job_title}): Category element not visible.")
                             
                             # Extract job ID from the URL
                             href = job_link.get_attribute("href")
@@ -2075,8 +2121,13 @@ class KeurigDrPepperScraper(JobScraper):
                                 except Exception as detail_err:
                                     self.logger.warning(f"Error extracting job details: {detail_err}")
                         
+                        except PlaywrightTimeoutError as te:
+                            # This specific timeout exception might not be hit as often due to is_visible checks
+                            self.logger.warning(f"General PlaywrightTimeoutError for job link {i} (Title: {job_title}): {te.message.splitlines()[0]}")
+                            continue # Skip to next job link
                         except Exception as e:
-                            self.logger.error(f"Error processing job link {i}: {e}")
+                            self.logger.error(f"Unexpected error processing job link {i} (Title: {job_title}): {e}")
+                            continue # Skip to next job link
 
                     # Check if there are more pages
                     if current_page < total_pages:
